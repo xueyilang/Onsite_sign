@@ -1,0 +1,447 @@
+Zoho Sign Integration Context Summary
+Generated on: 2026-04-15
+
+1. Workspace and preserved scripts
+
+The following temp scripts were created during this session and copied into this folder:
+
+- temp-zoho-sign-template-detail.py
+- temp-zoho-sign-create-document.py
+- temp-zoho-sign-create-embedded-url.py
+
+Purpose of each script:
+
+- temp-zoho-sign-template-detail.py
+  Lists templates and fetches a template detail payload.
+  Supports explicit base URL and auto-detecting Zoho Sign data center domains.
+
+- temp-zoho-sign-create-document.py
+  Creates a signing request from an existing Zoho Sign template.
+  Prefills template fields with placeholder values and sends a normal signing request.
+
+- temp-zoho-sign-create-embedded-url.py
+  Attempts to create an embedded-signing request from the same template and then fetch an embed signing URL.
+
+
+2. OAuth and environment notes
+
+Zoho Sign authentication uses OAuth 2.0 access tokens in the Authorization header:
+
+Authorization: Zoho-oauthtoken <access_token>
+
+Official Zoho Sign OAuth doc:
+https://www.zoho.com/sign/api/oauth.html
+
+Relevant scopes seen in Zoho docs:
+
+- ZohoSign.templates.READ
+- ZohoSign.templates.CREATE
+- ZohoSign.templates.UPDATE
+- ZohoSign.documents.READ
+- ZohoSign.documents.CREATE
+- ZohoSign.documents.UPDATE
+
+Important operational note:
+
+The token used during this session was provided directly in chat. That means it is exposed in the conversation context and should be rotated in Zoho after testing. For ongoing use, store the token in an environment variable such as:
+
+- ZOHO_SIGN_TOKEN
+- ZOHO_SIGN_BASE_URL
+
+
+3. Data center discovery and base URL
+
+Initial attempts against:
+
+- https://sign.zoho.com
+
+returned:
+
+- HTTP 401
+- code 9041
+- message: Invalid Oauth token
+
+This turned out not to be a bad token in itself, but a data center mismatch.
+
+Auto-detection succeeded against:
+
+- https://sign.zoho.eu
+
+Conclusion:
+
+This Zoho Sign account is on the EU data center, so all working API calls in this session used:
+
+- https://sign.zoho.eu
+
+
+4. Confirmed template detail endpoint
+
+The working template detail endpoint is:
+
+GET /api/v1/templates/{template_id}
+
+With full URL:
+
+https://sign.zoho.eu/api/v1/templates/{template_id}
+
+Official Zoho Sign use-case doc referenced:
+https://www.zoho.com/sign/api/use-cases/sending-a-document-using-template.html
+
+This endpoint was successfully called.
+
+Primary template used in this session:
+
+- template_id: 109605000000046181
+- template_name: ServiceProtokoll-Vorlage mit Unterschrift
+
+Main action inside the template:
+
+- action_id: 109605000000046206
+- action_type: SIGN
+- role: Kunden/Installer
+- delivery_mode: EMAIL
+- language: de
+
+Template document metadata:
+
+- document_id: 109605000000046182
+- total_pages: 1
+
+Template fields retrieved included:
+
+Text/date fields:
+
+- service_date
+- service_KW
+- kunden_name
+- kunden_addr
+- kunden_contact
+- system_modell
+- system_sn
+- system_bat_modell
+- system_bat_anzahl
+- vorort_problem
+- vorort_arbeiten
+- service_anmerkungen
+- austasuch_sn_alt
+- austasuch_sn_neue
+
+Checkbox fields included many operational status flags, for example:
+
+- zustand_schaeden_ja / zustand_schaeden_nein
+- zustand_installationsfehler_ja / zustand_installationfehler_nein
+- zustand_pv_ja / zustand_pv_nein
+- zustand_bat_ja / zustand_bat_nein
+- zustand_wr_ja / zustand_wr_nein
+- zustand_meter_ja / zustand_meter_nein
+- zustand_wb_ja / zustand_wb_nein
+- zustand_behoben_ja / zustand_behoben_nein
+
+Signer-facing fields confirmed in template actions:
+
+- Signatur
+- Signierungsdatum
+
+
+5. Script behavior details
+
+5.1 temp-zoho-sign-template-detail.py
+
+Key behaviors:
+
+- Can list templates:
+  GET /api/v1/templates
+
+- Can fetch a specific template:
+  GET /api/v1/templates/{template_id}
+
+- Can auto-detect a valid Zoho Sign base URL across common data centers.
+
+- Suppresses large image preview payloads by default so output is easier to inspect.
+
+Useful examples:
+
+List templates with automatic DC detection:
+python3 temp-zoho-sign-template-detail.py --auto-dc
+
+Fetch one template explicitly:
+ZOHO_SIGN_BASE_URL='https://sign.zoho.eu' python3 temp-zoho-sign-template-detail.py --template-id 109605000000046181
+
+
+5.2 temp-zoho-sign-create-document.py
+
+Purpose:
+
+- Pull the template
+- Build a request payload
+- Prefill template field data
+- Set recipient name and email
+- Call:
+  POST /api/v1/templates/{template_id}/createdocument
+
+Behavior:
+
+- Uses template document_fields to build:
+  field_text_data
+  field_date_data
+  field_boolean_data
+
+- Fills recipient:
+  recipient_name
+  recipient_email
+
+- Uses request_name supplied on the command line.
+
+
+5.3 temp-zoho-sign-create-embedded-url.py
+
+Purpose:
+
+- Create a request intended for embedded signing
+- Then call:
+  POST /api/v1/requests/{request_id}/actions/{action_id}/embedtoken
+
+Current implementation:
+
+- Marks the signer action with:
+  is_embedded = true
+
+- After request creation, it attempts to fetch an embed token or sign URL.
+
+Note:
+
+This embedded flow has not yet fully completed in production because the Zoho account hit a daily sending limit before the embedded request could be created successfully.
+
+
+6. Attempts that were run and their outcomes
+
+6.1 Template listing and detail lookup
+
+Status:
+
+- Successful
+
+What was confirmed:
+
+- Correct base URL is sign.zoho.eu
+- Template list retrieval works
+- Template detail retrieval works
+- Field metadata is available and usable for request construction
+
+
+6.2 Standard email signing request creation
+
+Goal:
+
+- Create a request named "Service Protocol—test04"
+- Prefill fields with placeholder values
+- Send signing request to:
+  marco.xue@alpha-ess.de
+  recipient name: Marco Xue
+
+Method used:
+
+- POST /api/v1/templates/109605000000046181/createdocument
+
+Result:
+
+- Successful
+
+Key returned values:
+
+- request_name: Service Protocol—test04
+- request_id: 109605000000049019
+- request_status: inprogress
+- message: Document has been submitted and sent for signature
+
+Recipient action result:
+
+- recipient_email: marco.xue@alpha-ess.de
+- recipient_name: Marco Xue
+- action_status: UNOPENED
+- delivery_mode: EMAIL
+
+Conclusion:
+
+The normal email-based Zoho Sign flow is working end-to-end with the chosen template.
+
+
+6.3 First embedded-signing attempt
+
+Goal:
+
+- Create "Service Protocol test05"
+- Avoid email delivery
+- Return a URL for direct signing
+
+First implementation attempt:
+
+- Added:
+  delivery_mode = NONE
+  is_embedded = true
+
+Result:
+
+- Failed
+
+Zoho response:
+
+- code: 9013
+- error_param: delivery_mode
+- message: You have entered some invalid characters
+
+Interpretation:
+
+- The value passed for delivery_mode was not accepted by the template-based createdocument endpoint.
+
+Action taken:
+
+- Removed delivery_mode override
+- Retried with only:
+  is_embedded = true
+
+
+6.4 Second embedded-signing attempt
+
+Goal:
+
+- Create embedded request after removing invalid delivery_mode value
+
+Result:
+
+- Failed due to account limit, not due to payload structure
+
+Zoho response:
+
+- code: 8111
+- message: Tägliches Dokumentversandlimit erreicht.
+
+Meaning:
+
+- Daily document sending limit has been reached on this Zoho Sign account.
+
+Interpretation:
+
+- This is the current real blocker for further live embedded-signing tests.
+
+
+6.5 Attempt to fetch embed URL from an already-created email request
+
+To validate endpoint behavior, the previously successful normal request was used:
+
+- request_id: 109605000000049019
+- action_id: 109605000000049058
+
+Endpoint tried:
+
+- POST /api/v1/requests/109605000000049019/actions/109605000000049058/embedtoken
+
+Result:
+
+- Failed as expected
+
+Zoho response:
+
+- code: 2009
+- message: Aktion nicht eingebettet
+
+Meaning:
+
+- The request action was not created as an embedded action.
+
+Conclusion:
+
+- A normal email request cannot simply be reused to obtain an embedded signing URL.
+- The signer action must be created as embedded from the beginning.
+
+
+7. Current integration conclusions
+
+What is confirmed working:
+
+- OAuth header format
+- EU data center routing
+- Template list retrieval
+- Template detail retrieval
+- Parsing template field metadata
+- Creating a document from a template
+- Sending a signing task by email
+
+What is strongly indicated but not fully live-confirmed yet:
+
+- Zoho embedded signing should require:
+  1. request creation with signer action marked embedded
+  2. embed token URL fetch via /embedtoken
+
+What is not yet fully completed:
+
+- A live embedded request creation
+- A live sign_url retrieval for direct browser signing
+
+Current blocker:
+
+- Zoho account daily sending limit reached
+
+
+8. Recommended next step after quota resets
+
+When the Zoho account daily sending limit resets, rerun:
+
+- temp-zoho-sign-create-embedded-url.py
+
+Expected path:
+
+1. Create request with is_embedded = true
+2. Receive request_id and new action_id
+3. Call /requests/{request_id}/actions/{action_id}/embedtoken
+4. Inspect the returned payload for sign_url or equivalent embedded signing URL
+
+
+9. Business-process recommendation derived from this session
+
+For onsite service-signing flows, the preferred architecture is:
+
+- Feishu spreadsheet or CRM as source of pre-known fields
+- Engineer-side confirmation layer for onsite-only facts
+- Zoho Sign as the signing execution layer
+
+Recommended data split:
+
+- System-prefilled fields:
+  customer identity, address, device model, serials, prior case data
+
+- Engineer-confirmed onsite fields:
+  actual findings, work completed, replacement info, final status, notes, confirmed recipient email
+
+- Zoho-generated signing fields:
+  signature, signing timestamp, signing status, audit trail
+
+Best practice:
+
+- Do not directly sign whatever is in Feishu at that moment.
+- Build a signing snapshot from:
+  1. Feishu source data
+  2. Engineer confirmation data
+  3. Recipient confirmation
+
+Then send that snapshot to Zoho Sign.
+
+
+10. Files and paths
+
+Current summary document:
+
+- /Users/xueyilang/Desktop/Onsite_signed/zoho-sign-context-summary.txt
+
+Copied scripts:
+
+- /Users/xueyilang/Desktop/Onsite_signed/temp-zoho-sign-template-detail.py
+- /Users/xueyilang/Desktop/Onsite_signed/temp-zoho-sign-create-document.py
+- /Users/xueyilang/Desktop/Onsite_signed/temp-zoho-sign-create-embedded-url.py
+
+
+11. Security note
+
+The OAuth token used in this session was exposed in chat content and used in command history.
+It should be rotated in Zoho as soon as practical.
+
