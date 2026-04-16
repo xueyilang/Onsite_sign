@@ -1421,3 +1421,24 @@ It has evolved into a working service-oriented integration shape:
 - Zoho callback
 - Feishu write-back
 
+
+19.7 Current next-step planning
+
+The currently known next major follow-up items are:
+
+- Zoho branding configuration should be reviewed and configured in the Zoho
+  backend so that the embedded signing interface looks more professional for
+  end users.
+- This includes reviewing branding-related settings such as:
+  - logo
+  - organization name
+  - email templates
+  - website title / favicon
+  - language defaults where available
+
+- A second protocol template is still required for chargeable service cases.
+- In addition to the current `ServiceProtokoll`, a separate paid-service
+  protocol template should later be created and integrated.
+- That future template will likely need its own mapping review and validation
+  rules.
+

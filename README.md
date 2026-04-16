@@ -382,3 +382,21 @@ Current known example:
   - `austasuch_sn_neue` must be filled
 
 This rule is already implemented in the current server validation.
+
+4. Zoho branding should be configured
+
+- Embedded sign links currently work technically, but the user-facing Zoho
+  signing interface should still be improved through Zoho backend branding.
+- This includes reviewing:
+  - logo
+  - organization name
+  - email templates
+  - website title / favicon
+  - language defaults where possible
+
+5. A second paid-service protocol template is still required
+
+- Beyond the current `ServiceProtokoll` template, a separate paid-service
+  protocol template still needs to be created.
+- This future template should cover the chargeable protocol workflow and may
+  require its own field review and mapping rules.
