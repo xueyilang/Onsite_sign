@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: onsite-sign-server
+    runtime: python
+    plan: free
+    buildCommand: ""
+    startCommand: python sign_server.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: ZOHO_SIGN_TOKEN
+        sync: false
+      - key: ZOHO_BASE_URL
+        value: https://sign.zoho.eu
+      - key: ZOHO_TEMPLATE_ID
+        value: 109605000000050022
+      - key: FEISHU_BASE_URL
+        value: https://open.feishu.cn
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_APP_TOKEN
+        sync: false
+      - key: FEISHU_TABLE_ID
+        value: tblmalaN9QTkenP0
+      - key: DEFAULT_NOTIFY_OPEN_ID
+        sync: false

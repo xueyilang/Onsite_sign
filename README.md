@@ -14,15 +14,26 @@ What is already confirmed:
 - Template detail retrieval works.
 - A signing request created from the existing template works.
 - Email-based signing has already been sent successfully once.
+- Feishu `Onsite Service` table can now supply the required Zoho template fields for at least one real work order.
+- A Feishu-driven signing request has already been created successfully for:
+  `WO-106915`
+  and sent by email to:
+  `tri.hu@alpha-ess.de`
 
 What has been verified with live data:
 
-- Template used:
+- Old template used earlier:
   `109605000000046181`
-- Template name:
-  `ServiceProtokoll-Vorlage mit Unterschrift`
+- Current working template now used for Feishu mapping:
+  `109605000000050022`
+- Current working template name:
+  `ServiceProtokoll`
 - A normal signing request was successfully created and sent by email to:
   `marco.xue@alpha-ess.de`
+- A Feishu-driven signing request named:
+  `WO-106915`
+  was successfully created and sent by email to:
+  `tri.hu@alpha-ess.de`
 
 What is not fully finished yet:
 
@@ -48,6 +59,10 @@ There is also one confirmed rule:
 - [temp-zoho-sign-create-embedded-url.py](./temp-zoho-sign-create-embedded-url.py)
   Used to create an embedded-signing request and then fetch the signing URL.
 
+- [temp-zoho-create-from-feishu.py](./temp-zoho-create-from-feishu.py)
+  Reads one `Onsite Service` record from Feishu, maps it into the current Zoho template,
+  validates required fields, and sends a normal email signing request.
+
 - [zoho-sign-context-summary.txt](./zoho-sign-context-summary.txt)
   Full test log and context summary from the session.
 
@@ -60,6 +75,8 @@ The integration has passed the first important milestone:
 - template-based request creation works
 - recipient injection works
 - normal email signing works
+- Feishu record to Zoho field mapping works for a real work order
+- Feishu-driven email signing works end-to-end for at least one real work order
 
 The next milestone is:
 
@@ -94,7 +111,7 @@ After Zoho's daily sending limit resets:
 
 This is the next concrete technical checkpoint.
 
-### 3. Standardize the `OnsiteService` table
+### 3. Keep the `OnsiteService` table as the source of truth
 
 Current product direction:
 
@@ -116,28 +133,25 @@ That means:
 
 This will make future template changes safer.
 
-Current known gaps in `OnsiteService`:
+The field expansion work has already started and the current table now includes:
 
-- the `zustand_*` status fields are not fully represented yet
-- `vorort_problem` is not yet properly included
-- `vorort_arbeiten` is not yet properly included
-- system-related detail fields still need to be made more complete
-- charging / billable state still needs to be clarified
-- installer-side form completion state still needs to be clarified
+- `vorort_system_modell`
+- `vorort_system_bat_modell`
+- `vorort_system_bat_anzahl`
+- `vorort_problem`
+- `vorort_arbeiten`
+- `vorort_anmerkungen`
+- `zustand_Schaeden`
+- `zustand_Installationsfehler`
+- `zustand_PVfunktions`
+- `zustand_Batterie`
+- `zustand_WR`
+- `zustand_Meter`
+- `zustand_WB`
+- `zustand_austausch`
+- `zustand_behoben`
 
-More concretely, the table still needs a better structure for:
-
-- onsite condition/result flags
-- onsite problem description
-- onsite work-performed description
-- richer system detail fields
-- whether the service is chargeable
-- whether the installer has already completed the required form
-
-So the current recommendation is:
-
-- first expand `OnsiteService` until it covers the real business record cleanly
-- only after that, lock the field mapping into Zoho
+These fields are now sufficient to cover the current Zoho `ServiceProtokoll` business fields for at least one tested work order.
 
 ### 4. Split fields into three classes
 
@@ -202,6 +216,50 @@ Recommended flow:
 
 This is better than using Zoho as the data model itself.
 
+## Intended Production Flow
+
+Current intended production direction:
+
+1. A custom Feishu table app or table-side action sends a request to our server.
+2. Whether Feishu can reliably include the triggering user ID in that request is still not fully confirmed.
+3. So the safer server-side design is:
+   use the `record_id` from the request to fetch the full record again from Feishu.
+4. The server reads the required `Onsite Service` fields from that record.
+5. The server maps those Feishu fields into the Zoho `ServiceProtokoll` template fields.
+6. The server creates a Zoho embedded signing request.
+7. The server calls Zoho again to obtain the embedded signing URL.
+8. The server sends that signing URL back to the relevant Feishu user by Feishu message.
+
+Preferred recipient of that Feishu message:
+
+- ideally the onsite engineer recorded in the table
+- if needed, this can be the engineer/user stored on the record rather than only the trigger initiator
+
+Expected field workflow:
+
+- the engineer receives the signing link in Feishu
+- the engineer opens it onsite
+- the customer signs on site through Zoho embedded signing
+
+After signing:
+
+1. Zoho sends a webhook to our server.
+2. The server downloads or retrieves the completed signed document.
+3. The server writes that signed document back into the matching Feishu record.
+4. The document should be attached to the corresponding attachment field in that same record.
+
+That completes one full service-signing cycle.
+
+In short, the target architecture is:
+
+- Feishu record triggers server
+- server reads Feishu record
+- server creates Zoho embedded signing
+- server sends signing link back to engineer in Feishu
+- customer signs onsite
+- Zoho webhook returns to server
+- server writes signed PDF back into Feishu attachment field
+
 ## Practical Priority Order
 
 The most sensible order from here is:
@@ -209,11 +267,64 @@ The most sensible order from here is:
 1. Rotate token
 2. Wait for Zoho daily sending limit reset
 3. Finish embedded URL signing test
-4. Expand `OnsiteService` so it includes:
-   `zustand_*`, `vorort_problem`, `vorort_arbeiten`, richer system details, chargeability, installer-form status
-5. Define the final standard `OnsiteService` field schema
-6. Build a stable field-mapping layer from `OnsiteService` to Zoho template
-7. Review which template fields should become list/checkbox/select fields
+4. Confirm the final Feishu trigger mechanism for `record_id` delivery
+5. Refine the stable Feishu-to-Zoho mapping layer
+6. Define final formatting and validation rules for all mapped fields
+7. Build a reusable production service module:
+   Feishu trigger -> Feishu record read -> Zoho embedded request -> Feishu message -> Zoho webhook -> Feishu attachment writeback
+
+## Confirmed Mapping Rules
+
+- `日期` in Feishu is stored as a timestamp value.
+- In the formal Zoho mapping layer, `service_date` should be sent in German business format:
+  `DD.MM.YYYY`
+  example:
+  `20.01.2026`
+- The date should be interpreted in German time:
+  `Europe/Berlin`
+- `周数 KW` should be normalized before mapping.
+- Only the integer week number should be sent to Zoho.
+  example:
+  `KW07` -> `7`
+  `KW16` -> `16`
+
+## Confirmed Field Mapping
+
+Current confirmed Feishu `Onsite Service` -> Zoho `ServiceProtokoll` mapping:
+
+- `日期` -> `service_date`
+- `周数 KW` -> `service_KW`
+- `联系人(工单)` -> `kunden_name`
+- `地址信息` -> `kunden_addr`
+- `联系方式` -> `kunden_contact`
+- `vorort_system_modell` -> `system_modell`
+- `SN编号` -> `system_sn`
+- `vorort_system_bat_modell` -> `system_bat_modell`
+- `vorort_system_bat_anzahl` -> `system_bat_anzahl`
+- `vorort_problem` -> `vorort_problem`
+- `vorort_arbeiten` -> `vorort_arbeiten`
+- `vorort_anmerkungen` -> `service_anmerkungen`
+- `SN(被取回)` -> `austasuch_sn_alte`
+- `SN(被使用)` -> `austasuch_sn_neue`
+- `zustand_Schaeden` -> `zustand_Schaeden`
+- `zustand_Installationsfehler` -> `zustand_Installationsfehler`
+- `zustand_PVfunktions` -> `zustand_PVfunktions`
+- `zustand_Batterie` -> `zustand_Batterie`
+- `zustand_WR` -> `zustand_WR`
+- `zustand_Meter` -> `zustand_Meter`
+- `zustand_WB` -> `zustand_WB`
+- `zustand_austausch` -> `zustand_austausch`
+- `zustand_behoben` -> `zustand_behoben`
+
+One Zoho-specific value quirk is already known:
+
+- Zoho template option for `zustand_PVfunktions` contains a typo:
+  `NIcht vorhanden`
+- Feishu keeps the normal value:
+  `Nicht vorhanden`
+- The mapping layer must convert:
+  `Nicht vorhanden` -> `NIcht vorhanden`
+  before sending to Zoho.
 
 ## Notes
 

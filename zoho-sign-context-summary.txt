@@ -445,3 +445,721 @@ Copied scripts:
 The OAuth token used in this session was exposed in chat content and used in command history.
 It should be rotated in Zoho as soon as practical.
 
+
+12. Later progress on 2026-04-16
+
+12.1 Current working template
+
+The later work in this repository moved to a newer Zoho template:
+
+- template_id: 109605000000050022
+- template_name: ServiceProtokoll
+- document_id: 109605000000050023
+- action_id: 109605000000050035
+- signer role: kunden
+
+Compared with the older template, this newer template uses dropdowns for the
+`zustand_*` fields instead of the earlier checkbox layout.
+
+
+12.2 Feishu Onsite Service table that is now used
+
+The current Feishu base and table used for mapping:
+
+- base app_token: MdBsbrJlXavNO8sWKTajF2HWpWe
+- table_id: tblmalaN9QTkenP0
+
+This table was inspected through the Feishu Bitable API using an existing
+custom app credential already present in other local repositories.
+
+Confirmed existing table headers included:
+
+- 上门单号
+- 周数 KW
+- 日期
+- 人员
+- SN编号
+- 联系人(工单)
+- 地址信息
+- 联系方式
+- 方向
+- 解决方案提案
+- 备注
+- 现场备注
+- 标准品名（被使用）
+- 数量
+- SN(被使用)
+- 标准品名（被取回）
+- 数量（被取回)
+- SN(被取回)
+- 状态
+- Email Adresse
+- Termin Bestätigung
+- 附件
+- 出库单号
+- 回库单号
+- 父记录 2
+- 父记录
+- 归档说明
+- 备注（系统备品出库回库）
+- WMS系统操作处理人（出库）
+- Straße und Hausnr.
+- PLZ
+- Uhrzeit
+- Datum
+
+
+12.3 New Feishu fields that were created
+
+To align Feishu with the Zoho template, the following new text fields were
+created in the current `Onsite Service` table:
+
+- vorort_system_modell
+- vorort_system_bat_modell
+- vorort_system_bat_anzahl
+- vorort_problem
+- vorort_arbeiten
+- vorort_anmerkungen
+
+The following new single-select fields were also created with options matching
+the Zoho template:
+
+- zustand_Schaeden: Ja / Nein
+- zustand_Installationsfehler: Ja / Nein
+- zustand_PVfunktions: Ja / Nein / Nicht vorhanden
+- zustand_Batterie: Ja / Nein / Nicht vorhanden
+- zustand_WR: Ja / Nein
+- zustand_Meter: Ja / Nein
+- zustand_WB: Ja / Nein / Nicht vorhanden
+- zustand_austausch: Ja / Nein
+- zustand_behoben: Ja / Nein
+
+
+12.4 Confirmed Feishu -> Zoho field mapping
+
+The currently confirmed mapping is:
+
+- 日期 -> service_date
+- 周数 KW -> service_KW
+- 联系人(工单) -> kunden_name
+- 地址信息 -> kunden_addr
+- 联系方式 -> kunden_contact
+- vorort_system_modell -> system_modell
+- SN编号 -> system_sn
+- vorort_system_bat_modell -> system_bat_modell
+- vorort_system_bat_anzahl -> system_bat_anzahl
+- vorort_problem -> vorort_problem
+- vorort_arbeiten -> vorort_arbeiten
+- vorort_anmerkungen -> service_anmerkungen
+- SN(被取回) -> austasuch_sn_alte
+- SN(被使用) -> austasuch_sn_neue
+- zustand_Schaeden -> zustand_Schaeden
+- zustand_Installationsfehler -> zustand_Installationsfehler
+- zustand_PVfunktions -> zustand_PVfunktions
+- zustand_Batterie -> zustand_Batterie
+- zustand_WR -> zustand_WR
+- zustand_Meter -> zustand_Meter
+- zustand_WB -> zustand_WB
+- zustand_austausch -> zustand_austausch
+- zustand_behoben -> zustand_behoben
+
+
+12.5 Confirmed Zoho required-vs-optional fields in the current template
+
+Current required business fields in Zoho `ServiceProtokoll`:
+
+- service_date
+- service_KW
+- kunden_name
+- kunden_addr
+- kunden_contact
+- system_modell
+- system_sn
+- system_bat_modell
+- system_bat_anzahl
+- vorort_problem
+- vorort_arbeiten
+- zustand_Schaeden
+- zustand_Installationsfehler
+- zustand_PVfunktions
+- zustand_Batterie
+- zustand_WR
+- zustand_Meter
+- zustand_WB
+- zustand_austausch
+- zustand_behoben
+
+Current optional business fields:
+
+- austasuch_sn_alte
+- austasuch_sn_neue
+- service_anmerkungen
+
+Signer-completed required fields remain:
+
+- Sign date
+- Signature
+
+
+12.6 Formatting rules confirmed for the formal mapping layer
+
+Two rules were explicitly decided for the formal script:
+
+- Feishu `日期` is stored as a timestamp.
+- When mapped into Zoho `service_date`, it should be converted into German
+  local date format:
+  DD.MM.YYYY
+  example:
+  20.01.2026
+
+- Feishu `周数 KW` should not be sent as the full original string when it
+  contains a prefix such as `KW07`.
+- Only the integer week value should be sent to Zoho.
+  examples:
+  `KW07` -> `7`
+  `KW16` -> `16`
+
+
+12.7 One confirmed Zoho template quirk
+
+The Zoho dropdown options are not perfectly clean.
+
+For the field:
+
+- zustand_PVfunktions
+
+Zoho currently stores the third option as:
+
+- NIcht vorhanden
+
+with an incorrect capital `I`.
+
+Feishu stores the normal value:
+
+- Nicht vorhanden
+
+So the mapping layer must explicitly translate:
+
+- Nicht vorhanden -> NIcht vorhanden
+
+before sending the payload to Zoho, otherwise Zoho returns:
+
+- code 4027
+- message: Field value does not match with the dropdown options
+
+
+12.8 Real end-to-end Feishu-driven email signing test
+
+A new helper script was created:
+
+- temp-zoho-create-from-feishu.py
+
+Its purpose is:
+
+- fetch one Feishu `Onsite Service` record by work order number
+- map Feishu values to the current Zoho template
+- validate required fields
+- send a standard Zoho email signing request
+
+The script was used successfully with:
+
+- work order: WO-106915
+- recipient name: Tri Hu
+- recipient email: tri.hu@alpha-ess.de
+
+Result:
+
+- success
+- request_name: WO-106915
+- request_id: 109605000000050094
+- request_status: inprogress
+- action_status: UNOPENED
+- message: Document has been submitted and sent for signature
+
+This confirmed:
+
+- Feishu data is now sufficient for at least one real work order
+- current mapping can satisfy Zoho required fields
+- Feishu-driven normal email signing works end-to-end
+
+
+12.9 Current remaining work
+
+The main remaining work from the current point is:
+
+- clean up the temporary Feishu-driven script into a more formal production script
+- implement the final date formatting rule as DD.MM.YYYY in Europe/Berlin time
+- normalize week values to integer-only form before sending to Zoho
+- optionally add a preview / dry-run mode before sending
+- continue embedded signing validation when Zoho quota allows
+
+
+13. Feishu contact lookup and IM message test on 2026-04-16
+
+13.1 Contact lookup worked
+
+Using the existing Feishu custom app credentials, contact lookup through:
+
+- GET /open-apis/contact/v3/users
+
+worked successfully.
+
+Visible users returned during the test included:
+
+- 胡洪浩 / Tri Hu
+  open_id: ou_030757fad5062dbc2eb512f79e631698
+- 薛轶朗 / Marco
+  open_id: ou_59c3ace2665789eeea82ffda54b21bc6
+- 程曦 / Cindy Cheng
+  open_id: ou_96ace13eeebc993ad12b908ab87d9dec
+
+This also confirmed again that the current app has at least partial contact
+scope visibility.
+
+
+13.2 Marco's current confirmed Feishu user ID
+
+Confirmed from the contact API:
+
+- display name: 薛轶朗
+- nickname: Marco
+- email: marco.xue@alpha-ess.de
+- open_id: ou_59c3ace2665789eeea82ffda54b21bc6
+
+
+13.3 IM message test result
+
+A direct IM send test was attempted through:
+
+- POST /open-apis/im/v1/messages?receive_id_type=open_id
+
+Target recipient:
+
+- ou_59c3ace2665789eeea82ffda54b21bc6
+
+Message body:
+
+- text: test
+
+The request did not succeed.
+
+Raw Feishu response:
+
+- HTTP 400
+- code: 230006
+- msg: Bot ability is not activated.
+
+Interpretation:
+
+- The app token and authentication flow are valid.
+- Contact lookup is allowed.
+- But the application's bot capability is not yet activated, so the app cannot
+  currently send direct Feishu IM messages even if IM-related API permissions
+  were requested.
+
+
+13.4 Current status after the test
+
+The user has already submitted the relevant permission / capability request and
+is now waiting for approval.
+
+So the current message-sending blocker is:
+
+- pending Feishu approval / activation of the bot ability
+
+Once the approval is granted and the bot ability is active, the message send
+test should be retried with the same open_id.
+
+
+14. Feishu -> own server trigger design note
+
+One later design question was discussed:
+
+- if a Feishu Bitable workflow / automation sends a request to the user's own
+  server, can it also reliably include which user created or triggered the
+  request
+
+Current practical conclusion:
+
+- this should not be assumed to be reliably provided by default in every
+  trigger payload
+- the safer design is to send at least:
+  - record_id
+  - table_id or other local routing metadata if useful
+- then let the server call Feishu Bitable API again to read the full record
+
+Recommended implementation pattern:
+
+1. Feishu sends a request to the server with a stable record identifier.
+2. The server queries the record through Feishu API.
+3. The server reads the user identity from a record field such as:
+   - 创建人
+   - 提交人
+   - 工程师
+   - or a custom stored open_id field
+
+So the current recommendation is:
+
+- do not rely only on the trigger payload to carry the operator identity
+- keep the creator / submitter identity in the table itself whenever that
+  identity matters downstream
+- use server-side follow-up queries for correctness
+
+
+15. Current end-to-end status: what is already working
+
+This section summarizes clearly which workflow segments are already proven to
+work, and which parts are only planned or partially validated.
+
+
+15.1 Workflow segments already fully working
+
+The following parts have already been validated successfully in real API calls:
+
+- Zoho OAuth authentication works
+  - header format confirmed:
+    Authorization: Zoho-oauthtoken <token>
+
+- Correct Zoho region routing works
+  - working base URL:
+    https://sign.zoho.eu
+
+- Zoho template listing works
+  - GET /api/v1/templates
+
+- Zoho template detail retrieval works
+  - GET /api/v1/templates/{template_id}
+
+- Zoho field inspection works
+  - template business fields can be read from template detail
+  - signer action fields can be read from template detail
+
+- Feishu Bitable read works
+  - server-side reading of the `Onsite Service` table works
+  - records can be fetched from the current base/table
+  - a specific work order can be found by local filtering after fetch
+
+- Feishu table expansion work is complete enough for the current template
+  - missing `vorort_*` fields were added
+  - missing `zustand_*` fields were added
+  - option sets were aligned with Zoho dropdowns
+
+- Feishu -> Zoho field mapping works for a real record
+  - the mapping was verified using real record:
+    WO-106915
+
+- Zoho required field satisfaction was verified for a real record
+  - the Feishu record WO-106915 contains values for all currently required
+    Zoho business fields in template `ServiceProtokoll`
+
+- Standard Zoho email signing creation works
+  - a signing request can be created from a Zoho template
+  - recipient injection works
+  - Zoho accepts the mapped payload
+  - Zoho sends the signing request by email
+
+- Real Feishu-driven email signing also works
+  - work order:
+    WO-106915
+  - recipient:
+    tri.hu@alpha-ess.de
+  - request_name:
+    WO-106915
+  - request_id:
+    109605000000050094
+  - result:
+    request_status = inprogress
+    action_status = UNOPENED
+    message = Document has been submitted and sent for signature
+
+This means the following practical sub-flow is already proven:
+
+1. Read Feishu record
+2. Map record into Zoho payload
+3. Validate required fields
+4. Create Zoho email signing request
+5. Zoho sends signing email
+
+
+15.2 Workflow segments that are partially validated
+
+The following parts are not fully completed yet, but the important technical
+pieces have already been explored:
+
+- Feishu contact lookup works
+  - app can read visible user list
+  - Marco's open_id was confirmed
+  - several user records can be read from contact API
+
+- Feishu IM message sending is not yet working
+  - this is not a token issue
+  - this is not a contact lookup issue
+  - current blocker returned by Feishu:
+    code 230006
+    Bot ability is not activated
+  - user has already applied for the required approval / activation
+
+- Feishu-trigger-to-server design is conceptually decided
+  - the reliable design should use record_id from the request
+  - the server should re-read the full record from Feishu
+  - but the final trigger implementation itself is not yet built
+
+
+15.3 Workflow segments not yet fully working
+
+The following planned production flow is still incomplete:
+
+- Zoho embedded signing request creation
+  - the intended direction is confirmed
+  - the exact production flow still needs final live validation
+
+- Zoho embed signing URL retrieval
+  - expected endpoint shape is known
+  - but final live production confirmation is still pending
+
+- Feishu message send-back with embedded signing link
+  - blocked until Feishu bot ability is activated
+
+- Zoho webhook -> server callback handling
+  - not yet implemented in this repository
+
+- Server-side retrieval of completed signed PDF after Zoho webhook
+  - not yet implemented in this repository
+
+- Writing the completed signed file back into Feishu attachment field
+  - not yet implemented in this repository
+
+
+15.4 Best current description of the project status
+
+The project is already past the "can this basically work?" stage.
+
+The following is already de-risked:
+
+- Feishu data can be used as the source
+- Feishu fields can cover the Zoho business template
+- Zoho template can be filled automatically
+- Zoho email signing can be created successfully from real Feishu data
+
+So the current state is:
+
+- email-signing path is already operational
+- embedded-signing path is the main remaining signing-side milestone
+- Feishu messaging and webhook/writeback are the main orchestration-side milestones
+
+
+15.5 Current practical interpretation
+
+If needed, a first production-like fallback flow could already be done as:
+
+1. engineer updates Feishu record
+2. server reads Feishu record
+3. server creates Zoho email signing request
+4. recipient receives Zoho email and signs
+
+But the intended final flow is still:
+
+1. Feishu request to server
+2. server reads Feishu record by record_id
+3. server creates Zoho embedded signing request
+4. server gets embedded link
+5. server sends link to engineer in Feishu
+6. engineer lets customer sign onsite
+7. Zoho webhook returns to server
+8. server writes signed document back to Feishu
+
+
+16. Embedded-signing + Feishu message step was successfully validated on 2026-04-16
+
+After the Zoho template dropdown typo for `zustand_PVfunktions` was corrected
+on the Zoho side, the next workflow step was tested again successfully.
+
+The tested chain was:
+
+1. read work order `WO-106915` from Feishu
+2. apply the current Feishu -> Zoho mapping
+3. create a Zoho embedded signing request instead of normal email signing
+4. request the Zoho embedded signing link through the embed token endpoint
+5. send that embedded signing link to Marco through Feishu bot message
+
+This flow succeeded.
+
+
+16.1 Script used
+
+A dedicated helper script was created for this step:
+
+- temp-zoho-embedded-from-feishu-to-lark.py
+
+Its purpose is:
+
+- read one Feishu work order record
+- normalize the current mapped values
+- create a Zoho embedded request
+- retrieve the embedded signing link
+- send the link to a Feishu open_id
+
+
+16.2 Successful result details
+
+The following live result was returned:
+
+- request_name: WO-106915
+- request_id: 109605000000050166
+- action_id: 109605000000050214
+- request_status: inprogress
+
+Embedded signing link was successfully returned by Zoho and then sent to
+Marco through Feishu IM.
+
+Feishu send result:
+
+- code: 0
+- msg: success
+- message_id: om_x100b513f596b193cc2c3aa98ec08d69
+
+
+16.3 Practical meaning
+
+This proves that the following final-production sub-flow is now already
+working:
+
+1. Feishu record read
+2. Feishu -> Zoho mapping
+3. Zoho embedded request creation
+4. Zoho embedded link retrieval
+5. Feishu bot message delivery of the signing link
+
+So the project has now passed beyond simple email-signing validation.
+
+
+16.4 What is now confirmed as working end-to-end
+
+The following orchestrated sub-flows are now confirmed:
+
+- Feishu record -> Zoho email signing request
+- Feishu record -> Zoho embedded signing request
+- Feishu record -> Zoho embedded sign link -> Feishu bot message back to user
+
+
+16.5 What still remains after this success
+
+The main remaining unimplemented part is now:
+
+- after signing is completed in Zoho,
+  receive webhook on server,
+  fetch completed signed document,
+  and write that document back into the matching Feishu record attachment field
+
+That is now the main remaining workflow milestone.
+
+
+17. Server-side sign start flow implemented on 2026-04-16
+
+A first server entrypoint has now been implemented in:
+
+- sign_server.py
+
+Current HTTP behavior:
+
+- GET / or /health
+  returns a simple health JSON
+- POST /sign/start
+  accepts JSON with:
+  - wo
+  - optional notify_open_id
+
+Current server assumption:
+
+- upstream caller only needs to send the work-order number (`WO`)
+- server itself searches the Feishu table by `上门单号`
+
+Current server flow:
+
+1. receive `WO`
+2. fetch Feishu record by work-order number
+3. map Feishu fields into Zoho fields using the latest confirmed mapping
+4. normalize:
+   - `日期` -> `DD.MM.YYYY`
+   - `周数 KW` -> integer only
+5. validate Zoho-required fields
+6. validate that mapped values do not contain Chinese characters
+7. if validation fails:
+   send detailed failure text to a Feishu user by open_id
+   (currently defaults to Marco)
+8. if validation passes:
+   create Zoho embedded signing request
+   with empty `recipient_name` and empty `recipient_email`
+9. fetch the embedded signing link from Zoho
+10. send the link to the Feishu user by bot message
+
+Validation rules now enforced by server:
+
+- all current Zoho required mapped fields must be non-empty
+- mapped values must not contain Chinese
+
+Current default Feishu notify target:
+
+- Marco open_id:
+  `ou_59c3ace2665789eeea82ffda54b21bc6`
+
+17.1 Real server test result
+
+The server was started locally and tested with:
+
+- POST /sign/start
+- wo = `WO-106915`
+
+Result:
+
+- server route worked
+- Feishu lookup worked
+- mapping worked
+- validation branch worked
+- Feishu bot error notification worked
+
+Returned validation error:
+
+- `vorort_arbeiten: contains Chinese -> 直流源充电+换1块电池`
+
+Feishu bot message send also succeeded for that validation failure.
+
+This means the new server-side guardrail is already working as intended:
+
+- if Feishu data is not yet safe for Zoho submission,
+  the server stops before creating the Zoho request,
+  and sends the detailed issue back to the designated Feishu user.
+
+
+17.2 Interface update on 2026-04-16
+
+The server trigger contract has now been standardized.
+
+Preferred request body for `POST /sign/start` is now:
+
+- `record_id`
+- `trigger_open_id`
+
+Optional fields:
+
+- `notify_open_id`
+- `wo`
+
+Interpretation:
+
+- `record_id` is now the primary lookup key
+- server fetches the Feishu row directly by `record_id`
+- `trigger_open_id` is the default Feishu notification target
+- `notify_open_id` can override that target when needed
+- `wo` is now only a compatibility/debug field and is not used as the main lookup key
+
+Updated practical flow:
+
+1. Feishu automation sends `record_id` and `trigger_open_id`
+2. server reads the record by `record_id`
+3. server maps and validates fields
+4. if invalid, server sends detailed Feishu error message to the notification target
+5. if valid, server creates the Zoho embedded sign request
+6. server gets the embedded sign link
+7. server sends the sign link back by Feishu message
+
