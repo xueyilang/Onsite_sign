@@ -30,3 +30,7 @@ services:
         sync: false
       - key: TRIGGER_AUTH_TOKEN
         sync: false
+      - key: ZOHO_WEBHOOK_SECRET
+        sync: false
+      - key: REQUEST_MAP_FILE
+        value: request_map.json
