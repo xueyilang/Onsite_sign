@@ -346,8 +346,8 @@ def build_embedded_actions(template: dict) -> list[dict]:
             {
                 "action_id": action["action_id"],
                 "action_type": action["action_type"],
-                "recipient_name": "",
-                "recipient_email": "",
+                "recipient_name": "Kunden Unterschrift",
+                "recipient_email": "marco.xue@alpha-ess.de",
                 "signing_order": action.get("signing_order", 1),
                 "verify_recipient": action.get("verify_recipient", False),
                 "private_notes": action.get("private_notes", ""),
