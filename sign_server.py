@@ -172,6 +172,65 @@ def get_feishu_record_by_id(tenant_token: str, record_id: str) -> dict:
     return item
 
 
+def list_feishu_users(tenant_token: str) -> list[dict]:
+    users: list[dict] = []
+    page_token = ""
+    while True:
+        query = urllib.parse.urlencode(
+            {k: v for k, v in {"page_size": 100, "page_token": page_token or None}.items() if v is not None}
+        )
+        response = api_request(
+            "GET",
+            f"{FEISHU_BASE_URL}/open-apis/contact/v3/users?{query}",
+            {"Authorization": f"Bearer {tenant_token}"},
+        )
+        if response.get("code") != 0:
+            raise RuntimeError(f"Feishu list users failed: {json.dumps(response, ensure_ascii=False)}")
+        data = response.get("data") or {}
+        items = data.get("items") or []
+        users.extend(items)
+        if not data.get("has_more"):
+            return users
+        page_token = data.get("page_token") or ""
+
+
+def resolve_open_id(tenant_token: str, raw_target: str) -> str:
+    target = raw_target.strip()
+    if not target:
+        return target
+    if target.startswith("ou_"):
+        return target
+
+    candidates: list[tuple[str, str]] = []
+    for user in list_feishu_users(tenant_token):
+        open_id = str(user.get("open_id") or "").strip()
+        if not open_id:
+            continue
+        for key in ("name", "en_name", "nickname", "email", "enterprise_email"):
+            value = str(user.get(key) or "").strip()
+            if value:
+                candidates.append((value, open_id))
+
+    matched_ids = [open_id for value, open_id in candidates if value == target]
+    unique_ids = sorted(set(matched_ids))
+    if len(unique_ids) == 1:
+        print(
+            json.dumps(
+                {
+                    "event": "notify_target.resolved",
+                    "raw_target": raw_target,
+                    "resolved_open_id": unique_ids[0],
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return unique_ids[0]
+    if len(unique_ids) > 1:
+        raise RuntimeError(f"Multiple Feishu users matched notify target: {raw_target}")
+    raise RuntimeError(f"Could not resolve Feishu open_id from notify target: {raw_target}")
+
+
 def find_record_by_wo(tenant_token: str, wo_number: str) -> dict:
     for item in list_feishu_records(tenant_token):
         fields = item.get("fields") or {}
@@ -310,8 +369,9 @@ def extract_embed_link(payload: dict) -> str:
 
 
 def send_feishu_text(tenant_token: str, open_id: str, text: str) -> dict:
+    resolved_open_id = resolve_open_id(tenant_token, open_id)
     payload = {
-        "receive_id": open_id,
+        "receive_id": resolved_open_id,
         "msg_type": "text",
         "content": json.dumps({"text": text}, ensure_ascii=False),
     }
