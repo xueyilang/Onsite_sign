@@ -28,3 +28,5 @@ services:
         value: tblmalaN9QTkenP0
       - key: DEFAULT_NOTIFY_OPEN_ID
         sync: false
+      - key: TRIGGER_AUTH_TOKEN
+        sync: false

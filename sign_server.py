@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hmac
 import json
 import os
 import re
@@ -20,6 +21,7 @@ FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "").strip()
 FEISHU_APP_TOKEN = os.getenv("FEISHU_APP_TOKEN", "").strip()
 FEISHU_TABLE_ID = os.getenv("FEISHU_TABLE_ID", "").strip()
 DEFAULT_NOTIFY_OPEN_ID = os.getenv("DEFAULT_NOTIFY_OPEN_ID", "").strip()
+TRIGGER_AUTH_TOKEN = os.getenv("TRIGGER_AUTH_TOKEN", "").strip()
 
 try:
     BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -82,6 +84,24 @@ def api_request(method: str, url: str, headers: dict[str, str], body: bytes | No
         raise RuntimeError(f"HTTP {exc.code} calling {url}: {body_text}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+
+
+def get_bearer_token(auth_header: str) -> str:
+    if not auth_header:
+        return ""
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
+def is_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    expected = require_env("TRIGGER_AUTH_TOKEN", TRIGGER_AUTH_TOKEN)
+    provided = (
+        handler.headers.get("X-Trigger-Token", "").strip()
+        or get_bearer_token(handler.headers.get("Authorization", "").strip())
+    )
+    return bool(provided) and hmac.compare_digest(provided, expected)
 
 
 def normalize_value(value: Any) -> str:
@@ -361,6 +381,15 @@ class SignHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path != "/sign/start":
             self._json_response(404, {"error": "not_found"})
+            return
+
+        try:
+            authorized = is_authorized(self)
+        except RuntimeError as exc:
+            self._json_response(500, {"error": "missing_trigger_auth_token", "detail": str(exc)})
+            return
+        if not authorized:
+            self._json_response(401, {"error": "unauthorized"})
             return
 
         try:

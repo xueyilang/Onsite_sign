@@ -1163,3 +1163,20 @@ Updated practical flow:
 6. server gets the embedded sign link
 7. server sends the sign link back by Feishu message
 
+
+17.3 Trigger authentication requirement
+
+The server now requires a shared trigger authentication token for
+`POST /sign/start`.
+
+Accepted request headers:
+
+- `X-Trigger-Token: <token>`
+- or `Authorization: Bearer <token>`
+
+Deployment rule:
+
+- the real token value must be configured through Render environment variable
+  `TRIGGER_AUTH_TOKEN`
+- the real secret should not be committed into the repository
+
