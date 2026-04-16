@@ -18,6 +18,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ZOHO_BASE_URL = os.getenv("ZOHO_BASE_URL", "https://sign.zoho.eu").strip()
 ZOHO_TEMPLATE_ID = os.getenv("ZOHO_TEMPLATE_ID", "").strip()
+ZOHO_ACCOUNTS_BASE_URL = os.getenv("ZOHO_ACCOUNTS_BASE_URL", "https://accounts.zoho.eu").strip()
+ZOHO_SIGN_TOKEN = os.getenv("ZOHO_SIGN_TOKEN", "").strip()
+ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "").strip()
+ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
+ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
 
 FEISHU_BASE_URL = os.getenv("FEISHU_BASE_URL", "https://open.feishu.cn").strip()
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
@@ -38,32 +43,32 @@ WO_FIELD = "\u4e0a\u95e8\u5355\u53f7"
 ATTACHMENT_FIELD_NAME = "\u9644\u4ef6"
 
 REQUIRED_FIELD_MAPPING = {
-    "service_date": "\u65e5\u671f",
-    "service_KW": "\u5468\u6570 KW",
-    "kunden_name": "\u8054\u7cfb\u4eba(\u5de5\u5355)",
-    "kunden_addr": "\u5730\u5740\u4fe1\u606f",
-    "kunden_contact": "\u8054\u7cfb\u65b9\u5f0f",
-    "system_modell": "vorort_system_modell",
-    "system_sn": "SN\u7f16\u53f7",
-    "system_bat_modell": "vorort_system_bat_modell",
-    "system_bat_anzahl": "vorort_system_bat_anzahl",
-    "vorort_problem": "vorort_problem",
-    "vorort_arbeiten": "vorort_arbeiten",
-    "zustand_Schaeden": "zustand_Schaeden",
-    "zustand_Installationsfehler": "zustand_Installationsfehler",
-    "zustand_PVfunktions": "zustand_PVfunktions",
-    "zustand_Batterie": "zustand_Batterie",
-    "zustand_WR": "zustand_WR",
-    "zustand_Meter": "zustand_Meter",
-    "zustand_WB": "zustand_WB",
-    "zustand_austausch": "zustand_austausch",
-    "zustand_behoben": "zustand_behoben",
+    "service_date": ["\u65e5\u671f"],
+    "service_KW": ["\u5468\u6570 KW"],
+    "kunden_name": ["\u8054\u7cfb\u4eba(\u5de5\u5355)"],
+    "kunden_addr": ["\u5730\u5740\u4fe1\u606f"],
+    "kunden_contact": ["\u8054\u7cfb\u65b9\u5f0f"],
+    "system_modell": ["vorort_system_modell"],
+    "system_sn": ["SN\u7f16\u53f7"],
+    "system_bat_modell": ["vorort_system_bat_modell"],
+    "system_bat_anzahl": ["vorort_system_bat_anzahl"],
+    "vorort_problem": ["vorort_problem"],
+    "vorort_arbeiten": ["vorort_arbeiten"],
+    "zustand_Schaeden": ["Schaeden vorhanden", "zustand_Schaeden"],
+    "zustand_Installationsfehler": ["Installationsfehler vorhanden", "zustand_Installationsfehler"],
+    "zustand_PVfunktions": ["PV funktionsfaehig", "zustand_PVfunktions"],
+    "zustand_Batterie": ["Batterie funktionsfaehig", "zustand_Batterie"],
+    "zustand_WR": ["Wechselrichter funktionsfaehig", "zustand_WR"],
+    "zustand_Meter": ["Meter funktionsfaehig", "zustand_Meter"],
+    "zustand_WB": ["Wallbox funktionsfaehig", "zustand_WB"],
+    "zustand_austausch": ["Austausch durchgefuehrt", "zustand_austausch"],
+    "zustand_behoben": ["Problem behoben", "zustand_behoben"],
 }
 
 OPTIONAL_FIELD_MAPPING = {
-    "austasuch_sn_alte": "SN(\u88ab\u53d6\u56de)",
-    "austasuch_sn_neue": "SN(\u88ab\u4f7f\u7528)",
-    "service_anmerkungen": "vorort_anmerkungen",
+    "austasuch_sn_alte": ["SN(\u88ab\u53d6\u56de)"],
+    "austasuch_sn_neue": ["SN(\u88ab\u4f7f\u7528)"],
+    "service_anmerkungen": ["vorort_anmerkungen"],
 }
 
 CHINESE_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
@@ -130,6 +135,28 @@ def verify_zoho_webhook_signature(raw_body: bytes, signature: str) -> bool:
     return bool(signature) and hmac.compare_digest(signature.strip().lower(), expected.lower())
 
 
+def get_zoho_access_token() -> str:
+    if ZOHO_REFRESH_TOKEN and ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET:
+        response = api_request(
+            "POST",
+            f"{ZOHO_ACCOUNTS_BASE_URL}/oauth/v2/token",
+            {"Content-Type": "application/x-www-form-urlencoded"},
+            urllib.parse.urlencode(
+                {
+                    "refresh_token": ZOHO_REFRESH_TOKEN,
+                    "client_id": ZOHO_CLIENT_ID,
+                    "client_secret": ZOHO_CLIENT_SECRET,
+                    "grant_type": "refresh_token",
+                }
+            ).encode("utf-8"),
+        )
+        access_token = str(response.get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError(f"Zoho refresh-token exchange returned no access_token: {json.dumps(response, ensure_ascii=False)}")
+        return access_token
+    return require_env("ZOHO_SIGN_TOKEN", ZOHO_SIGN_TOKEN)
+
+
 def load_request_map() -> dict[str, dict[str, str]]:
     if not REQUEST_MAP_FILE.exists():
         return {}
@@ -169,6 +196,18 @@ def normalize_value(value: Any) -> str:
                 return normalize_value(value[key])
         return ""
     return str(value).strip()
+
+
+def get_record_field_value(record_fields: dict[str, Any], field_names: list[str]) -> str:
+    for field_name in field_names:
+        if field_name in record_fields:
+            value = normalize_value(record_fields.get(field_name))
+            if value:
+                return value
+    for field_name in field_names:
+        if field_name in record_fields:
+            return normalize_value(record_fields.get(field_name))
+    return ""
 
 
 def get_feishu_tenant_token() -> str:
@@ -306,10 +345,10 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
 
 def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     mapped: dict[str, str] = {}
-    for zoho_field, feishu_field in REQUIRED_FIELD_MAPPING.items():
-        mapped[zoho_field] = map_zoho_field_value(zoho_field, normalize_value(record_fields.get(feishu_field)))
-    for zoho_field, feishu_field in OPTIONAL_FIELD_MAPPING.items():
-        raw_value = normalize_value(record_fields.get(feishu_field))
+    for zoho_field, feishu_fields in REQUIRED_FIELD_MAPPING.items():
+        mapped[zoho_field] = map_zoho_field_value(zoho_field, get_record_field_value(record_fields, feishu_fields))
+    for zoho_field, feishu_fields in OPTIONAL_FIELD_MAPPING.items():
+        raw_value = get_record_field_value(record_fields, feishu_fields)
         if raw_value:
             mapped[zoho_field] = map_zoho_field_value(zoho_field, raw_value)
     return mapped
@@ -555,7 +594,7 @@ def process_zoho_webhook(payload: dict, raw_body: bytes) -> dict:
     if not should_writeback:
         return {"ok": True, "ignored": True, "request_id": request_id, "record_id": record_id, "reason": "event_not_relevant"}
 
-    zoho_token = require_env("ZOHO_SIGN_TOKEN", os.getenv("ZOHO_SIGN_TOKEN", "").strip())
+    zoho_token = get_zoho_access_token()
     pdf_bytes, content_type = download_zoho_signed_pdf(zoho_token, request_id, document_id or None)
     tenant_token = get_feishu_tenant_token()
     filename = f"{resolved_wo}-signed.pdf"
@@ -622,13 +661,8 @@ class SignHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": "missing_notify_open_id"})
             return
 
-        zoho_token = os.getenv("ZOHO_SIGN_TOKEN", "").strip()
-        if not zoho_token:
-            self._json_response(500, {"error": "missing_zoho_token"})
-            return
-
         try:
-            result = process_sign_start(record_id, notify_open_id, zoho_token, wo_number=wo_number)
+            result = process_sign_start(record_id, notify_open_id, get_zoho_access_token(), wo_number=wo_number)
         except Exception as exc:
             print(json.dumps({"event": "http.post.sign_start.processing_failed", "record_id": record_id, "notify_open_id": notify_open_id, "detail": str(exc)}, ensure_ascii=False), flush=True)
             traceback.print_exc()

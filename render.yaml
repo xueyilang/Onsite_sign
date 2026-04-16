@@ -10,12 +10,20 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
-      - key: ZOHO_SIGN_TOKEN
-        sync: false
       - key: ZOHO_BASE_URL
         value: https://sign.zoho.eu
+      - key: ZOHO_ACCOUNTS_BASE_URL
+        value: https://accounts.zoho.eu
       - key: ZOHO_TEMPLATE_ID
         value: 109605000000050022
+      - key: ZOHO_CLIENT_ID
+        sync: false
+      - key: ZOHO_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_REFRESH_TOKEN
+        sync: false
+      - key: ZOHO_SIGN_TOKEN
+        sync: false
       - key: FEISHU_BASE_URL
         value: https://open.feishu.cn
       - key: FEISHU_APP_ID
