@@ -352,6 +352,7 @@ def build_embedded_actions(template: dict) -> list[dict]:
                 "signing_order": action.get("signing_order", 1),
                 "verify_recipient": action.get("verify_recipient", False),
                 "private_notes": action.get("private_notes", ""),
+                "send_completed_document": True,
                 "is_embedded": True,
             }
         )
