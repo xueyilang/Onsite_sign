@@ -1180,3 +1180,251 @@ Deployment rule:
   `TRIGGER_AUTH_TOKEN`
 - the real secret should not be committed into the repository
 
+
+18. Completed document download and Feishu attachment write-back test on 2026-04-16
+
+An additional live validation was completed for the downstream file-return flow.
+
+Goal:
+
+- confirm that a signed Zoho document can be downloaded
+- confirm that the downloaded PDF can then be uploaded into the matching
+  Feishu Bitable record attachment field
+
+
+18.1 Zoho source document used
+
+The tested signed request/document was:
+
+- request_id: 109605000000050166
+- document_id: 109605000000050157
+- request_name: WO-106915
+
+This was the embedded-signing request that had already been completed
+successfully earlier.
+
+
+18.2 Zoho download result
+
+The signed PDF was successfully downloaded through the Zoho Sign API.
+
+Confirmed working download endpoints:
+
+- `GET /api/v1/requests/{request_id}/pdf`
+- `GET /api/v1/requests/{request_id}/documents/{document_id}/pdf`
+
+For the tested request/document, the downloaded file was a valid PDF:
+
+- content type: `application/pdf`
+- file size: `432349` bytes
+
+A local test filename used for the downloaded file was:
+
+- `WO-106915-signed.pdf`
+
+
+18.3 Feishu attachment upload result
+
+The downloaded PDF was then uploaded into Feishu storage successfully.
+
+The upload path used was Feishu Drive media upload.
+
+Successful upload result included:
+
+- file_token: `Dkz9b6gBToIJ6JxnHmAj0oXNpmf`
+
+
+18.4 Matching Feishu record used
+
+The target Feishu record for the write-back was:
+
+- work order: `WO-106915`
+- record_id: `recva9IA4CjqnQ`
+
+The attachment field used in the table is:
+
+- field name: `附件`
+
+
+18.5 Record update result
+
+The Feishu Bitable record update succeeded.
+
+Important practical note:
+
+- updating the record attachment field worked when using the field name
+  `附件`
+- the update payload used the field name rather than the field_id
+
+After update, reading the record back confirmed that the attachment field now
+contains the uploaded PDF with metadata including:
+
+- file_token: `Dkz9b6gBToIJ6JxnHmAj0oXNpmf`
+- name: `WO-106915-signed.pdf`
+- size: `432349`
+- type: `application/pdf`
+
+
+18.6 Practical meaning
+
+This is an important milestone because it confirms that the final downstream
+document-return step is technically feasible.
+
+The following sub-flow is now proven:
+
+1. signed Zoho request exists
+2. server downloads the completed PDF from Zoho
+3. server uploads the PDF to Feishu
+4. server writes the uploaded file into the matching Feishu record attachment field
+
+So the project has now also validated the critical write-back direction:
+
+- Zoho signed output -> Feishu attachment field
+
+
+18.7 What this changes for the remaining webhook work
+
+Because the document download and Feishu attachment write-back were both
+validated successfully, the main missing piece for full production flow is now
+mostly orchestration:
+
+- receive Zoho webhook
+- identify the matching request_id / record_id relationship
+- trigger the already-proven:
+  - Zoho PDF download
+  - Feishu attachment upload
+  - Feishu record update
+
+In other words:
+
+- the webhook callback path is still not implemented
+- but the difficult downstream file-handling step is no longer unknown
+
+
+19. Current integrated server status on 2026-04-16
+
+The project later moved from separate temporary scripts toward one deployed
+Render service with two HTTP routes:
+
+- `POST /sign/start`
+- `POST /webhooks/zoho-sign`
+
+
+19.1 Current `/sign/start` behavior
+
+The Feishu-trigger route now:
+
+- accepts:
+  - `record_id`
+  - `trigger_open_id`
+- reads the Feishu record by `record_id`
+- maps the current Feishu fields into the Zoho template
+- validates:
+  - required fields are present
+  - mapped values do not contain Chinese characters
+- creates a Zoho embedded signing request
+- requests the Zoho embed token / link
+- sends the signing link back by Feishu bot message
+
+Security for this route:
+
+- protected by shared secret
+  `TRIGGER_AUTH_TOKEN`
+
+
+19.2 Current `/webhooks/zoho-sign` behavior
+
+The Zoho webhook route now:
+
+- accepts Zoho callback requests
+- verifies the Zoho HMAC signature
+- extracts `request_id`
+- resolves the matching Feishu record
+- downloads the signed PDF from Zoho
+- uploads the PDF into Feishu
+- writes the uploaded file into the Feishu attachment field
+
+Security for this route:
+
+- protected by Zoho webhook HMAC secret
+  `ZOHO_WEBHOOK_SECRET`
+
+
+19.3 Important webhook implementation correction
+
+An earlier webhook verification attempt returned:
+
+- HTTP 401
+
+because the signature verification format was initially implemented
+incorrectly.
+
+Correct interpretation:
+
+- Zoho webhook signature must be verified as:
+  `base64(HMAC-SHA256(raw_body))`
+
+This was later corrected in the deployed server implementation.
+
+
+19.4 Current request mapping strategy
+
+The current server stores request mapping locally in:
+
+- `request_map.json`
+
+The stored relationship is:
+
+- `zoho request_id`
+- `feishu record_id`
+- `wo`
+- `action_id`
+
+This is currently enough for webhook callback resolution, but it is still
+considered a replaceable temporary persistence layer.
+
+The user may later replace this with another mapping approach.
+
+
+19.5 Current embedded recipient test configuration
+
+For current embedded request testing, the server now uses placeholder signer
+identity values instead of empty values, because Zoho rejected empty
+`recipient_name`.
+
+Current embedded placeholder values:
+
+- recipient_name: `Kunden Unterschrift`
+- recipient_email: `marco.xue@alpha-ess.de`
+
+Current embedded action also explicitly sets:
+
+- `send_completed_document = true`
+
+This is meant to test whether Zoho will still send the completed signed copy
+to the configured email even when the signing flow itself is embedded.
+
+
+19.6 Current overall status
+
+At this point the following end-to-end capabilities have been implemented and
+at least technically validated:
+
+- Feishu record -> server
+- server -> Zoho embedded request
+- Zoho embedded link -> Feishu bot message
+- Zoho signed PDF download
+- Feishu file upload
+- Feishu attachment-field write-back
+- Zoho webhook route with HMAC verification
+
+So the project is now no longer only a prototype of isolated API calls.
+
+It has evolved into a working service-oriented integration shape:
+
+- Feishu trigger
+- server orchestration
+- Zoho signing
+- Zoho callback
+- Feishu write-back
+

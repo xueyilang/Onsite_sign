@@ -216,62 +216,77 @@ Recommended flow:
 
 This is better than using Zoho as the data model itself.
 
-## Intended Production Flow
+## Current Workflow
 
-Current intended production direction:
+The current server implementation now supports the full intended workflow shape:
 
-1. A custom Feishu table app or table-side action sends a request to our server.
-2. Whether Feishu can reliably include the triggering user ID in that request is still not fully confirmed.
-3. So the safer server-side design is:
-   use the `record_id` from the request to fetch the full record again from Feishu.
-4. The server reads the required `Onsite Service` fields from that record.
-5. The server maps those Feishu fields into the Zoho `ServiceProtokoll` template fields.
-6. The server creates a Zoho embedded signing request.
-7. The server calls Zoho again to obtain the embedded signing URL.
-8. The server sends that signing URL back to the relevant Feishu user by Feishu message.
+1. Feishu table automation sends a request to the server with:
+   - `record_id`
+   - `trigger_open_id`
+2. The server reads the full `Onsite Service` record from Feishu by `record_id`.
+3. The server maps Feishu fields into the Zoho `ServiceProtokoll` template.
+4. The server validates:
+   - required Zoho fields are present
+   - mapped values do not contain Chinese characters
+5. If validation fails, the server sends a detailed error back through Feishu bot message.
+6. If validation passes, the server creates a Zoho embedded signing request.
+7. The server fetches the Zoho embedded signing URL.
+8. The server sends the signing URL back to the target Feishu user by Feishu bot message.
+9. The customer signs on site through the Zoho embedded page.
+10. Zoho sends a webhook callback to the server.
+11. The server verifies the Zoho webhook HMAC signature.
+12. The server downloads the signed PDF from Zoho.
+13. The server uploads the PDF to Feishu.
+14. The server writes the uploaded PDF into the matching Feishu record attachment field.
 
-Preferred recipient of that Feishu message:
+That completes one service-signing cycle.
 
-- ideally the onsite engineer recorded in the table
-- if needed, this can be the engineer/user stored on the record rather than only the trigger initiator
-
-Expected field workflow:
-
-- the engineer receives the signing link in Feishu
-- the engineer opens it onsite
-- the customer signs on site through Zoho embedded signing
-
-After signing:
-
-1. Zoho sends a webhook to our server.
-2. The server downloads or retrieves the completed signed document.
-3. The server writes that signed document back into the matching Feishu record.
-4. The document should be attached to the corresponding attachment field in that same record.
-
-That completes one full service-signing cycle.
-
-In short, the target architecture is:
+In short, the current implemented architecture is:
 
 - Feishu record triggers server
 - server reads Feishu record
 - server creates Zoho embedded signing
-- server sends signing link back to engineer in Feishu
+- server sends signing link back to Feishu user
 - customer signs onsite
 - Zoho webhook returns to server
 - server writes signed PDF back into Feishu attachment field
 
-## Practical Priority Order
+The current deployment uses one Render service with two routes:
 
-The most sensible order from here is:
+- `POST /sign/start`
+- `POST /webhooks/zoho-sign`
 
-1. Rotate token
-2. Wait for Zoho daily sending limit reset
-3. Finish embedded URL signing test
-4. Confirm the final Feishu trigger mechanism for `record_id` delivery
-5. Refine the stable Feishu-to-Zoho mapping layer
-6. Define final formatting and validation rules for all mapped fields
-7. Build a reusable production service module:
-   Feishu trigger -> Feishu record read -> Zoho embedded request -> Feishu message -> Zoho webhook -> Feishu attachment writeback
+Important current implementation notes:
+
+- The Feishu trigger route is protected by `TRIGGER_AUTH_TOKEN`.
+- The Zoho webhook route is protected by `ZOHO_WEBHOOK_SECRET` HMAC verification.
+- The current webhook implementation uses a local `request_map.json` file to map
+  `request_id -> record_id`.
+- That mapping layer can be replaced later by a different persistence approach.
+
+## Current Status
+
+The following have now been validated successfully:
+
+- Feishu record read by `record_id`
+- Feishu -> Zoho field mapping
+- required-field validation
+- Chinese-content validation
+- Zoho embedded signing request creation
+- Zoho embedded signing URL retrieval
+- Feishu bot message delivery of the signing link
+- Zoho signed PDF download
+- Feishu file upload
+- Feishu attachment-field write-back
+- Zoho webhook route implementation
+- Zoho webhook HMAC verification implementation
+
+The remaining work is now mainly hardening and cleanup:
+
+1. confirm Zoho webhook payloads in repeated real-world runs
+2. decide the final durable mapping strategy for `request_id -> record_id`
+3. decide whether to keep one service with two routes or refactor into modules
+4. improve operational logging and retry behavior where needed
 
 ## Confirmed Mapping Rules
 
@@ -332,3 +347,46 @@ One Zoho-specific value quirk is already known:
 - They are enough to validate endpoints and payload structure.
 - Once embedded signing is confirmed, the next cleanup step should be:
   combine them into one cleaner script or service module.
+
+## Remaining Decisions
+
+The following points are not fully finalized yet and should be treated as
+active follow-up decisions:
+
+1. `kunden_name` source in the Zoho request
+
+- The current Feishu -> Zoho mapping uses:
+  `联系人(工单)` -> `kunden_name`
+- This should be reviewed again before final production hardening.
+- The open question is whether the Feishu-recorded customer/contact name should
+  always be used directly in the Zoho request.
+- That should only remain the final rule if the Feishu source data is
+  confirmed to be accurate enough.
+
+2. `alte / neue SN` template behavior
+
+- The current Zoho template still needs adjustment for:
+  - `austasuch_sn_alte`
+  - `austasuch_sn_neue`
+- These fields should not carry incorrect default values in the template.
+- They should be changed to have no default value.
+
+3. Request eligibility rules must be formalized further
+
+- The current server already validates:
+  - Zoho required fields are non-empty
+  - mapped values do not contain Chinese characters
+- These current request-start conditions should be documented clearly and kept
+  explicit as the baseline validation set.
+
+Additional conditional rules still need to be added.
+
+Current known example:
+
+- if `zustand_austausch = Ja`
+  then:
+  - `austasuch_sn_alte` must be filled
+  - `austasuch_sn_neue` must be filled
+
+This means the request-start validation layer still needs a second pass for
+business-condition-based rules, beyond the current flat required-field checks.
