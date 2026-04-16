@@ -71,6 +71,32 @@ OPTIONAL_FIELD_MAPPING = {
     "service_anmerkungen": ["vorort_anmerkungen"],
 }
 
+FIELD_LABELS = {
+    "service_date": "\u65e5\u671f",
+    "service_KW": "\u5468\u6570 KW",
+    "kunden_name": "\u8054\u7cfb\u4eba(\u5de5\u5355)",
+    "kunden_addr": "\u5730\u5740\u4fe1\u606f",
+    "kunden_contact": "\u8054\u7cfb\u65b9\u5f0f",
+    "system_modell": "vorort_system_modell",
+    "system_sn": "SN\u7f16\u53f7",
+    "system_bat_modell": "vorort_system_bat_modell",
+    "system_bat_anzahl": "vorort_system_bat_anzahl",
+    "vorort_problem": "vorort_problem",
+    "vorort_arbeiten": "vorort_arbeiten",
+    "service_anmerkungen": "vorort_anmerkungen",
+    "austasuch_sn_alte": "SN(\u88ab\u53d6\u56de)",
+    "austasuch_sn_neue": "SN(\u88ab\u4f7f\u7528)",
+    "zustand_Schaeden": "Schaeden vorhanden",
+    "zustand_Installationsfehler": "Installationsfehler vorhanden",
+    "zustand_PVfunktions": "PV funktionsfaehig",
+    "zustand_Batterie": "Batterie funktionsfaehig",
+    "zustand_WR": "Wechselrichter funktionsfaehig",
+    "zustand_Meter": "Meter funktionsfaehig",
+    "zustand_WB": "Wallbox funktionsfaehig",
+    "zustand_austausch": "Austausch durchgefuehrt",
+    "zustand_behoben": "Problem behoben",
+}
+
 CHINESE_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 
 
@@ -210,6 +236,10 @@ def get_record_field_value(record_fields: dict[str, Any], field_names: list[str]
     return ""
 
 
+def get_field_label(field_name: str) -> str:
+    return FIELD_LABELS.get(field_name, field_name)
+
+
 def get_feishu_tenant_token() -> str:
     app_id = require_env("FEISHU_APP_ID", FEISHU_APP_ID)
     app_secret = require_env("FEISHU_APP_SECRET", FEISHU_APP_SECRET)
@@ -285,31 +315,61 @@ def list_feishu_users(tenant_token: str) -> list[dict]:
         page_token = data.get("page_token") or ""
 
 
-def resolve_open_id(tenant_token: str, raw_target: str) -> str:
+def resolve_user_identity(tenant_token: str, raw_target: str) -> dict[str, str]:
     target = raw_target.strip()
     if not target:
-        return target
-    if target.startswith("ou_"):
-        return target
+        return {"open_id": "", "email": ""}
 
-    candidates: list[tuple[str, str]] = []
+    users = list_feishu_users(tenant_token)
+    if target.startswith("ou_"):
+        for user in users:
+            open_id = str(user.get("open_id") or "").strip()
+            if open_id == target:
+                email = (
+                    str(user.get("enterprise_email") or "").strip()
+                    or str(user.get("email") or "").strip()
+                )
+                return {"open_id": open_id, "email": email}
+        return {"open_id": target, "email": ""}
+
+    candidates: list[tuple[str, str, str]] = []
     for user in list_feishu_users(tenant_token):
         open_id = str(user.get("open_id") or "").strip()
         if not open_id:
             continue
+        email = (
+            str(user.get("enterprise_email") or "").strip()
+            or str(user.get("email") or "").strip()
+        )
         for key in ("name", "en_name", "nickname", "email", "enterprise_email"):
             value = str(user.get(key) or "").strip()
             if value:
-                candidates.append((value, open_id))
+                candidates.append((value, open_id, email))
 
-    matched_ids = [open_id for value, open_id in candidates if value == target]
-    unique_ids = sorted(set(matched_ids))
-    if len(unique_ids) == 1:
-        print(json.dumps({"event": "notify_target.resolved", "raw_target": raw_target, "resolved_open_id": unique_ids[0]}, ensure_ascii=False), flush=True)
-        return unique_ids[0]
-    if len(unique_ids) > 1:
+    matched = [(open_id, email) for value, open_id, email in candidates if value == target]
+    unique_matches = sorted(set(matched))
+    if len(unique_matches) == 1:
+        resolved_open_id, resolved_email = unique_matches[0]
+        print(
+            json.dumps(
+                {
+                    "event": "notify_target.resolved",
+                    "raw_target": raw_target,
+                    "resolved_open_id": resolved_open_id,
+                    "resolved_email": resolved_email,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return {"open_id": resolved_open_id, "email": resolved_email}
+    if len(unique_matches) > 1:
         raise RuntimeError(f"Multiple Feishu users matched notify target: {raw_target}")
     raise RuntimeError(f"Could not resolve Feishu open_id from notify target: {raw_target}")
+
+
+def resolve_open_id(tenant_token: str, raw_target: str) -> str:
+    return resolve_user_identity(tenant_token, raw_target).get("open_id", "")
 
 
 def find_record_by_wo(tenant_token: str, wo_number: str) -> dict:
@@ -343,6 +403,17 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
     return raw_value
 
 
+def build_request_name(wo_number: str) -> str:
+    return f"VorortProtocol_{wo_number}"
+
+
+def extract_wo_from_request_name(request_name: str) -> str:
+    prefix = "VorortProtocol_"
+    if request_name.startswith(prefix):
+        return request_name[len(prefix) :].strip()
+    return request_name.strip()
+
+
 def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     mapped: dict[str, str] = {}
     for zoho_field, feishu_fields in REQUIRED_FIELD_MAPPING.items():
@@ -358,15 +429,20 @@ def validate_mapped_fields(mapped_fields: dict[str, str]) -> None:
     errors: list[str] = []
     for zoho_field in REQUIRED_FIELD_MAPPING:
         value = mapped_fields.get(zoho_field, "").strip()
+        field_label = get_field_label(zoho_field)
         if not value:
-            errors.append(f"{zoho_field}: empty")
+            errors.append(f"{field_label}: empty")
         elif CHINESE_RE.search(value):
-            errors.append(f"{zoho_field}: contains Chinese -> {value}")
+            errors.append(f"{field_label}: contains Chinese -> {value}")
     for zoho_field, value in mapped_fields.items():
         if value and CHINESE_RE.search(value):
-            message = f"{zoho_field}: contains Chinese -> {value}"
+            message = f"{get_field_label(zoho_field)}: contains Chinese -> {value}"
             if message not in errors:
                 errors.append(message)
+    if mapped_fields.get("zustand_austausch", "").strip() == "Ja":
+        for field_name in ("austasuch_sn_alte", "austasuch_sn_neue"):
+            if not mapped_fields.get(field_name, "").strip():
+                errors.append(f"{get_field_label(field_name)}: required when Austausch durchgefuehrt = Ja")
     if errors:
         raise ValidationError(errors)
 
@@ -379,15 +455,15 @@ def get_zoho_template_detail(token: str) -> dict:
     return response["templates"]
 
 
-def build_embedded_actions(template: dict) -> list[dict]:
+def build_embedded_actions(template: dict, recipient_name: str, recipient_email: str) -> list[dict]:
     actions = []
     for action in template.get("actions", []):
         actions.append(
             {
                 "action_id": action["action_id"],
                 "action_type": action["action_type"],
-                "recipient_name": "Kunden Unterschrift",
-                "recipient_email": "marco.xue@alpha-ess.de",
+                "recipient_name": recipient_name,
+                "recipient_email": recipient_email,
                 "signing_order": action.get("signing_order", 1),
                 "verify_recipient": action.get("verify_recipient", False),
                 "private_notes": action.get("private_notes", ""),
@@ -398,13 +474,15 @@ def build_embedded_actions(template: dict) -> list[dict]:
     return actions
 
 
-def create_zoho_embedded_request(token: str, wo_number: str, mapped_fields: dict[str, str]) -> dict:
+def create_zoho_embedded_request(token: str, wo_number: str, mapped_fields: dict[str, str], recipient_email: str) -> dict:
     template_id = require_env("ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID)
     template = get_zoho_template_detail(token)
+    recipient_name = mapped_fields.get("kunden_name", "").strip() or "Kunden Unterschrift"
+    resolved_recipient_email = recipient_email.strip() or "service@alpha-ess.de"
     payload = {
         "templates": {
-            "request_name": wo_number,
-            "actions": build_embedded_actions(template),
+            "request_name": build_request_name(wo_number),
+            "actions": build_embedded_actions(template, recipient_name, resolved_recipient_email),
             "field_data": {"field_text_data": mapped_fields, "field_date_data": {}, "field_boolean_data": {}},
         }
     }
@@ -544,25 +622,40 @@ def find_document_id(payload: Any) -> str:
 def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_number: str = "") -> dict:
     print(json.dumps({"event": "process_sign_start.begin", "record_id": record_id, "notify_open_id": notify_open_id, "wo_number_hint": wo_number}, ensure_ascii=False), flush=True)
     tenant_token = get_feishu_tenant_token()
+    notify_identity = resolve_user_identity(tenant_token, notify_open_id)
+    resolved_notify_open_id = notify_identity.get("open_id", "").strip() or notify_open_id
+    resolved_notify_email = notify_identity.get("email", "").strip()
     record = get_feishu_record_by_id(tenant_token, record_id)
     record_fields = record.get("fields") or {}
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
-    print(json.dumps({"event": "process_sign_start.record_loaded", "record_id": record_id, "resolved_wo": resolved_wo}, ensure_ascii=False), flush=True)
+    print(
+        json.dumps(
+            {
+                "event": "process_sign_start.record_loaded",
+                "record_id": record_id,
+                "resolved_wo": resolved_wo,
+                "resolved_notify_open_id": resolved_notify_open_id,
+                "resolved_notify_email": resolved_notify_email,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     mapped_fields = build_mapped_fields(record_fields)
     try:
         validate_mapped_fields(mapped_fields)
     except ValidationError as exc:
         print(json.dumps({"event": "process_sign_start.validation_failed", "record_id": record_id, "resolved_wo": resolved_wo, "validation_errors": exc.details}, ensure_ascii=False), flush=True)
-        feishu_response = send_feishu_text(tenant_token, notify_open_id, f"{resolved_wo} validation failed:\n" + "\n".join(exc.details))
+        feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} validation failed:\n" + "\n".join(exc.details))
         return {"ok": False, "wo": resolved_wo, "record_id": record_id, "error_type": "validation", "validation_errors": exc.details, "feishu_message_response": feishu_response}
 
-    created = create_zoho_embedded_request(zoho_token, resolved_wo, mapped_fields)
+    created = create_zoho_embedded_request(zoho_token, resolved_wo, mapped_fields, resolved_notify_email)
     action_id = created["actions"][0]["action_id"]
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)
     print(json.dumps({"event": "process_sign_start.zoho_request_created", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "action_id": action_id}, ensure_ascii=False), flush=True)
     embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id))
-    feishu_response = send_feishu_text(tenant_token, notify_open_id, f"{resolved_wo} embedded sign link:\n{embed_link}")
+    feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} embedded sign link:\n{embed_link}")
     print(json.dumps({"event": "process_sign_start.completed", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "message_sent": feishu_response.get("msg")}, ensure_ascii=False), flush=True)
     return {"ok": True, "wo": resolved_wo, "record_id": record_id, "request_id": request_id, "action_id": action_id, "request_status": created.get("request_status"), "embed_link": embed_link, "feishu_message_response": feishu_response}
 
@@ -583,7 +676,7 @@ def process_zoho_webhook(payload: dict, raw_body: bytes) -> dict:
         resolved_wo = mapping.get("wo", "") or request_name or request_id
     else:
         tenant_token = get_feishu_tenant_token()
-        resolved_wo = request_name or request_id
+        resolved_wo = extract_wo_from_request_name(request_name) if request_name else request_id
         record_id = find_record_by_wo(tenant_token, resolved_wo).get("record_id", "")
 
     if not record_id:

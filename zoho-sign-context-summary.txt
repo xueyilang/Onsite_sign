@@ -563,6 +563,11 @@ The currently confirmed mapping is:
 - zustand_austausch -> zustand_austausch
 - zustand_behoben -> zustand_behoben
 
+The `kunden_name` mapping decision is now confirmed:
+
+- the Feishu field `联系人(工单)` is considered reliable enough
+- the server should continue using it directly as the Zoho customer name
+
 
 12.5 Confirmed Zoho required-vs-optional fields in the current template
 
@@ -622,29 +627,17 @@ Two rules were explicitly decided for the formal script:
 
 12.7 One confirmed Zoho template quirk
 
-The Zoho dropdown options are not perfectly clean.
+This Zoho dropdown typo was corrected later.
 
 For the field:
 
 - zustand_PVfunktions
 
-Zoho currently stores the third option as:
-
-- NIcht vorhanden
-
-with an incorrect capital `I`.
-
-Feishu stores the normal value:
+the current template now uses the normal option value:
 
 - Nicht vorhanden
 
-So the mapping layer must explicitly translate:
-
-- Nicht vorhanden -> NIcht vorhanden
-
-before sending the payload to Zoho, otherwise Zoho returns:
-
-- code 4027
+So no special value translation is currently required in the mapping layer.
 - message: Field value does not match with the dropdown options
 
 

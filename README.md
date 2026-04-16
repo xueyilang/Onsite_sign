@@ -331,15 +331,11 @@ Current confirmed Feishu `Onsite Service` -> Zoho `ServiceProtokoll` mapping:
 - `zustand_austausch` -> `zustand_austausch`
 - `zustand_behoben` -> `zustand_behoben`
 
-One Zoho-specific value quirk is already known:
+One Zoho-specific value quirk existed earlier:
 
-- Zoho template option for `zustand_PVfunktions` contains a typo:
-  `NIcht vorhanden`
-- Feishu keeps the normal value:
-  `Nicht vorhanden`
-- The mapping layer must convert:
-  `Nicht vorhanden` -> `NIcht vorhanden`
-  before sending to Zoho.
+- Zoho template option for `zustand_PVfunktions` previously contained a typo.
+- That typo has already been corrected in the current template.
+- No special value conversion is currently required for that field.
 
 ## Notes
 
@@ -350,26 +346,23 @@ One Zoho-specific value quirk is already known:
 
 ## Remaining Decisions
 
-The following points are not fully finalized yet and should be treated as
-active follow-up decisions:
+The following points are still active follow-up items:
 
-1. `kunden_name` source in the Zoho request
-
-- The current Feishu -> Zoho mapping uses:
-  `联系人(工单)` -> `kunden_name`
-- This should be reviewed again before final production hardening.
-- The open question is whether the Feishu-recorded customer/contact name should
-  always be used directly in the Zoho request.
-- That should only remain the final rule if the Feishu source data is
-  confirmed to be accurate enough.
-
-2. `alte / neue SN` template behavior
+1. `alte / neue SN` template behavior
 
 - The current Zoho template still needs adjustment for:
   - `austasuch_sn_alte`
   - `austasuch_sn_neue`
 - These fields should not carry incorrect default values in the template.
 - They should be changed to have no default value.
+
+2. `kunden_name` source is confirmed
+
+- The current Feishu -> Zoho mapping uses:
+  `联系人(工单)` -> `kunden_name`
+- This source is now considered reliable enough for the current workflow.
+- The server should continue to use the Feishu-recorded contact name directly
+  as the customer name in the Zoho request.
 
 3. Request eligibility rules must be formalized further
 
@@ -379,7 +372,7 @@ active follow-up decisions:
 - These current request-start conditions should be documented clearly and kept
   explicit as the baseline validation set.
 
-Additional conditional rules still need to be added.
+Additional conditional rules may still need to be added over time.
 
 Current known example:
 
@@ -388,5 +381,4 @@ Current known example:
   - `austasuch_sn_alte` must be filled
   - `austasuch_sn_neue` must be filled
 
-This means the request-start validation layer still needs a second pass for
-business-condition-based rules, beyond the current flat required-field checks.
+This rule is already implemented in the current server validation.
