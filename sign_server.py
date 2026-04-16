@@ -431,18 +431,20 @@ def validate_mapped_fields(mapped_fields: dict[str, str]) -> None:
         value = mapped_fields.get(zoho_field, "").strip()
         field_label = get_field_label(zoho_field)
         if not value:
-            errors.append(f"{field_label}: empty")
+            errors.append(f"Field '{field_label}' is invalid: value is required but currently empty.")
         elif CHINESE_RE.search(value):
-            errors.append(f"{field_label}: contains Chinese -> {value}")
+            errors.append(f"Field '{field_label}' is invalid: value should not contain Chinese characters. Current value: {value}")
     for zoho_field, value in mapped_fields.items():
         if value and CHINESE_RE.search(value):
-            message = f"{get_field_label(zoho_field)}: contains Chinese -> {value}"
+            message = f"Field '{get_field_label(zoho_field)}' is invalid: value should not contain Chinese characters. Current value: {value}"
             if message not in errors:
                 errors.append(message)
     if mapped_fields.get("zustand_austausch", "").strip() == "Ja":
         for field_name in ("austasuch_sn_alte", "austasuch_sn_neue"):
             if not mapped_fields.get(field_name, "").strip():
-                errors.append(f"{get_field_label(field_name)}: required when Austausch durchgefuehrt = Ja")
+                errors.append(
+                    f"Field '{get_field_label(field_name)}' is invalid: value is required when 'Austausch durchgefuehrt' is 'Ja'."
+                )
     if errors:
         raise ValidationError(errors)
 
