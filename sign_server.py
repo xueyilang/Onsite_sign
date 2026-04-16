@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import hmac
 import json
 import os
@@ -125,7 +126,7 @@ def is_authorized(handler: BaseHTTPRequestHandler) -> bool:
 
 def verify_zoho_webhook_signature(raw_body: bytes, signature: str) -> bool:
     secret = require_env("ZOHO_WEBHOOK_SECRET", ZOHO_WEBHOOK_SECRET)
-    expected = hmac.new(secret.encode("utf-8"), raw_body, "sha256").hexdigest()
+    expected = base64.b64encode(hmac.new(secret.encode("utf-8"), raw_body, "sha256").digest()).decode("utf-8")
     return bool(signature) and hmac.compare_digest(signature.strip().lower(), expected.lower())
 
 
