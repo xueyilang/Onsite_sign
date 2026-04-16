@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import re
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -323,14 +324,49 @@ def send_feishu_text(tenant_token: str, open_id: str, text: str) -> dict:
 
 
 def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_number: str = "") -> dict:
+    print(
+        json.dumps(
+            {
+                "event": "process_sign_start.begin",
+                "record_id": record_id,
+                "notify_open_id": notify_open_id,
+                "wo_number_hint": wo_number,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     tenant_token = get_feishu_tenant_token()
     record = get_feishu_record_by_id(tenant_token, record_id)
     record_fields = record.get("fields") or {}
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
+    print(
+        json.dumps(
+            {
+                "event": "process_sign_start.record_loaded",
+                "record_id": record_id,
+                "resolved_wo": resolved_wo,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     mapped_fields = build_mapped_fields(record_fields)
     try:
         validate_mapped_fields(mapped_fields)
     except ValidationError as exc:
+        print(
+            json.dumps(
+                {
+                    "event": "process_sign_start.validation_failed",
+                    "record_id": record_id,
+                    "resolved_wo": resolved_wo,
+                    "validation_errors": exc.details,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         error_text = f"{resolved_wo} validation failed:\n" + "\n".join(exc.details)
         feishu_response = send_feishu_text(tenant_token, notify_open_id, error_text)
         return {
@@ -345,10 +381,36 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     created = create_zoho_embedded_request(zoho_token, resolved_wo, mapped_fields)
     action_id = created["actions"][0]["action_id"]
     request_id = created["request_id"]
+    print(
+        json.dumps(
+            {
+                "event": "process_sign_start.zoho_request_created",
+                "record_id": record_id,
+                "resolved_wo": resolved_wo,
+                "request_id": request_id,
+                "action_id": action_id,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     embed_payload = get_embed_token_payload(zoho_token, request_id, action_id)
     embed_link = extract_embed_link(embed_payload)
     message_text = f"{resolved_wo} embedded sign link:\n{embed_link}"
     feishu_response = send_feishu_text(tenant_token, notify_open_id, message_text)
+    print(
+        json.dumps(
+            {
+                "event": "process_sign_start.completed",
+                "record_id": record_id,
+                "resolved_wo": resolved_wo,
+                "request_id": request_id,
+                "message_sent": feishu_response.get("msg"),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     return {
         "ok": True,
         "wo": resolved_wo,
@@ -383,12 +445,43 @@ class SignHandler(BaseHTTPRequestHandler):
             self._json_response(404, {"error": "not_found"})
             return
 
+        print(
+            json.dumps(
+                {
+                    "event": "http.post.sign_start.received",
+                    "client_address": self.client_address[0] if self.client_address else "",
+                    "path": self.path,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         try:
             authorized = is_authorized(self)
         except RuntimeError as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "http.post.sign_start.auth_config_missing",
+                        "detail": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             self._json_response(500, {"error": "missing_trigger_auth_token", "detail": str(exc)})
             return
         if not authorized:
+            print(
+                json.dumps(
+                    {
+                        "event": "http.post.sign_start.unauthorized",
+                        "client_address": self.client_address[0] if self.client_address else "",
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             self._json_response(401, {"error": "unauthorized"})
             return
 
@@ -397,6 +490,16 @@ class SignHandler(BaseHTTPRequestHandler):
             raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
             payload = json.loads(raw_body.decode("utf-8"))
         except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "http.post.sign_start.invalid_json",
+                        "detail": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             self._json_response(400, {"error": "invalid_json", "detail": str(exc)})
             return
 
@@ -405,6 +508,19 @@ class SignHandler(BaseHTTPRequestHandler):
         wo_number = str(payload.get("wo") or payload.get("WO") or "").strip()
         default_notify_open_id = DEFAULT_NOTIFY_OPEN_ID.strip()
         notify_open_id = str(payload.get("notify_open_id") or trigger_open_id or default_notify_open_id).strip()
+        print(
+            json.dumps(
+                {
+                    "event": "http.post.sign_start.parsed",
+                    "record_id": record_id,
+                    "trigger_open_id": trigger_open_id,
+                    "notify_open_id": notify_open_id,
+                    "wo_number": wo_number,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         if not record_id:
             self._json_response(400, {"error": "missing_record_id"})
             return
@@ -420,6 +536,19 @@ class SignHandler(BaseHTTPRequestHandler):
         try:
             result = process_sign_start(record_id, notify_open_id, zoho_token, wo_number=wo_number)
         except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "http.post.sign_start.processing_failed",
+                        "record_id": record_id,
+                        "notify_open_id": notify_open_id,
+                        "detail": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            traceback.print_exc()
             try:
                 tenant_token = get_feishu_tenant_token()
                 error_label = wo_number or record_id
@@ -435,7 +564,7 @@ class SignHandler(BaseHTTPRequestHandler):
 def main() -> int:
     port = int(os.getenv("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), SignHandler)
-    print(f"Listening on http://0.0.0.0:{port}", flush=True)
+    print(json.dumps({"event": "server.start", "port": port}, ensure_ascii=False), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
