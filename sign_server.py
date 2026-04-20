@@ -23,6 +23,7 @@ ZOHO_SIGN_TOKEN = os.getenv("ZOHO_SIGN_TOKEN", "").strip()
 ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "").strip()
 ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
 ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
+ZOHO_EMBED_LOCALE = os.getenv("ZOHO_EMBED_LOCALE", "de").strip() or "de"
 
 FEISHU_BASE_URL = os.getenv("FEISHU_BASE_URL", "https://open.feishu.cn").strip()
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
@@ -515,7 +516,17 @@ def extract_embed_link(payload: dict) -> str:
     match = re.search(r"https://[^\s\"\\]+", json.dumps(payload, ensure_ascii=False))
     if not match:
         raise RuntimeError(f"Could not find embed link in payload: {json.dumps(payload, ensure_ascii=False)}")
-    return match.group(0)
+    return force_embed_link_locale(match.group(0))
+
+
+def force_embed_link_locale(url: str, locale: str = ZOHO_EMBED_LOCALE) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    query_items = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query_items = [(key, value) for key, value in query_items if key.lower() != "locale"]
+    query_items.append(("locale", locale))
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query_items), parsed.fragment)
+    )
 
 
 def send_feishu_text(tenant_token: str, open_id: str, text: str) -> dict:
