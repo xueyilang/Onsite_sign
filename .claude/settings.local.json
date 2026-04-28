@@ -2,8 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(git *)",
+      "Bash(curl *)",
       "Bash(python *)",
-      "Bash(curl *)"
+      "Bash(PYTHONIOENCODING=utf-8 python *)",
+      "Bash(rm *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(mkdir *)",
+      "Bash(mv *)",
+      "Bash(cp *)",
+      "Bash(grep *)"
     ]
   }
 }

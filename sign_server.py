@@ -40,18 +40,18 @@ try:
 except ZoneInfoNotFoundError:
     BERLIN_TZ = None
 
-WO_FIELD = "\u4e0a\u95e8\u5355\u53f7"
-ATTACHMENT_FIELD_NAME = "\u9644\u4ef6"
+WO_FIELD = "上门单号"
+ATTACHMENT_FIELD_NAME = "附件"
 EMAIL_FIELD = "Email Adresse"
 
 REQUIRED_FIELD_MAPPING = {
-    "service_date": ["\u65e5\u671f"],
-    "service_KW": ["\u5468\u6570 KW"],
-    "kunden_name": ["\u8054\u7cfb\u4eba(\u5de5\u5355)"],
-    "kunden_addr": ["\u5730\u5740\u4fe1\u606f"],
+    "service_date": ["日期"],
+    "service_KW": ["周数 KW"],
+    "kunden_name": ["联系人(工单)"],
+    "kunden_addr": ["地址信息"],
     "kunden_contact": ["Email Adresse", "联系方式"],
     "system_modell": ["vorort_system_modell"],
-    "system_sn": ["SN\u7f16\u53f7"],
+    "system_sn": ["SN编号"],
     "system_bat_modell": ["vorort_system_bat_modell"],
     "system_bat_anzahl": ["vorort_system_bat_anzahl"],
     "vorort_problem": ["vorort_problem"],
@@ -68,26 +68,26 @@ REQUIRED_FIELD_MAPPING = {
 }
 
 OPTIONAL_FIELD_MAPPING = {
-    "austasuch_sn_alte": ["SN(\u88ab\u53d6\u56de)"],
-    "austasuch_sn_neue": ["SN(\u88ab\u4f7f\u7528)"],
+    "austasuch_sn_alte": ["SN(被取回)"],
+    "austasuch_sn_neue": ["SN(被使用)"],
     "service_anmerkungen": ["vorort_anmerkungen"],
 }
 
 FIELD_LABELS = {
-    "service_date": "\u65e5\u671f",
-    "service_KW": "\u5468\u6570 KW",
-    "kunden_name": "\u8054\u7cfb\u4eba(\u5de5\u5355)",
-    "kunden_addr": "\u5730\u5740\u4fe1\u606f",
-    "kunden_contact": "\u8054\u7cfb\u65b9\u5f0f",
+    "service_date": "日期",
+    "service_KW": "周数 KW",
+    "kunden_name": "联系人(工单)",
+    "kunden_addr": "地址信息",
+    "kunden_contact": "联系方式",
     "system_modell": "vorort_system_modell",
-    "system_sn": "SN\u7f16\u53f7",
+    "system_sn": "SN编号",
     "system_bat_modell": "vorort_system_bat_modell",
     "system_bat_anzahl": "vorort_system_bat_anzahl",
     "vorort_problem": "vorort_problem",
     "vorort_arbeiten": "vorort_arbeiten",
     "service_anmerkungen": "vorort_anmerkungen",
-    "austasuch_sn_alte": "SN(\u88ab\u53d6\u56de)",
-    "austasuch_sn_neue": "SN(\u88ab\u4f7f\u7528)",
+    "austasuch_sn_alte": "SN(被取回)",
+    "austasuch_sn_neue": "SN(被使用)",
     "zustand_Schaeden": "Schaeden vorhanden",
     "zustand_Installationsfehler": "Installationsfehler vorhanden",
     "zustand_PVfunktions": "PV funktionsfaehig",
@@ -100,7 +100,7 @@ FIELD_LABELS = {
 }
 
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-CHINESE_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 
 
 class ValidationError(Exception):
