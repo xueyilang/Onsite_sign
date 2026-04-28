@@ -25,9 +25,9 @@ What has been verified with live data:
 - Old template used earlier:
   `109605000000046181`
 - Current working template now used for Feishu mapping:
-  `109605000000050022`
+  `109352000000046015`
 - Current working template name:
-  `ServiceProtokoll`
+  `VorortServiceProtokoll`
 - A normal signing request was successfully created and sent by email to:
   `marco.xue@alpha-ess.de`
 - A Feishu-driven signing request named:
@@ -385,14 +385,12 @@ This rule is already implemented in the current server validation.
 
 4. Zoho branding should be configured
 
-- Embedded sign links currently work technically, but the user-facing Zoho
-  signing interface should still be improved through Zoho backend branding.
-- This includes reviewing:
-  - logo
-  - organization name
-  - email templates
-  - website title / favicon
-  - language defaults where possible
+- Zoho branding for the email flow has already been implemented at an initial
+  level.
+- The signing-page-side customization is still not fully understood.
+- It is still unclear how much of the signer-facing interface can be
+  customized beyond the existing branding setup.
+- This should be reviewed further later.
 
 5. A second paid-service protocol template is still required
 
@@ -400,3 +398,17 @@ This rule is already implemented in the current server validation.
   protocol template still needs to be created.
 - This future template should cover the chargeable protocol workflow and may
   require its own field review and mapping rules.
+- This has not yet been implemented.
+
+6. Additional installer email-signing scenarios may be needed
+
+- Besides the current onsite signing flow, there may also be future scenarios
+  where forms are sent by email to installers for signature.
+- It is not yet decided whether these flows should be triggered by:
+  - chatbot instructions that tell a remote agent what to execute
+  - or dedicated scripts/services
+- The currently expected useful scenarios include:
+  - `Umschreiben`
+  - `Ruecknahme zur Pruefung`
+  - `Sign table onsite`
+- These candidate scenarios should still be confirmed with `Tri`.

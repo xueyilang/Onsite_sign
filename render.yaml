@@ -15,7 +15,7 @@ services:
       - key: ZOHO_ACCOUNTS_BASE_URL
         value: https://accounts.zoho.eu
       - key: ZOHO_TEMPLATE_ID
-        value: 109605000000050022
+        value: 109352000000046015
       - key: ZOHO_CLIENT_ID
         sync: false
       - key: ZOHO_CLIENT_SECRET
@@ -24,6 +24,8 @@ services:
         sync: false
       - key: ZOHO_SIGN_TOKEN
         sync: false
+      - key: ZOHO_EMBED_LOCALE
+        value: de
       - key: FEISHU_BASE_URL
         value: https://open.feishu.cn
       - key: FEISHU_APP_ID
@@ -33,7 +35,7 @@ services:
       - key: FEISHU_APP_TOKEN
         sync: false
       - key: FEISHU_TABLE_ID
-        value: tblmalaN9QTkenP0
+        value: tblHCxh8GzFQMxtO
       - key: DEFAULT_NOTIFY_OPEN_ID
         sync: false
       - key: TRIGGER_AUTH_TOKEN
