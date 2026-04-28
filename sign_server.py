@@ -42,13 +42,14 @@ except ZoneInfoNotFoundError:
 
 WO_FIELD = "\u4e0a\u95e8\u5355\u53f7"
 ATTACHMENT_FIELD_NAME = "\u9644\u4ef6"
+EMAIL_FIELD = "Email Adresse"
 
 REQUIRED_FIELD_MAPPING = {
     "service_date": ["\u65e5\u671f"],
     "service_KW": ["\u5468\u6570 KW"],
     "kunden_name": ["\u8054\u7cfb\u4eba(\u5de5\u5355)"],
     "kunden_addr": ["\u5730\u5740\u4fe1\u606f"],
-    "kunden_contact": ["\u8054\u7cfb\u65b9\u5f0f"],
+    "kunden_contact": ["Email Adresse", "联系方式"],
     "system_modell": ["vorort_system_modell"],
     "system_sn": ["SN\u7f16\u53f7"],
     "system_bat_modell": ["vorort_system_bat_modell"],
@@ -98,6 +99,7 @@ FIELD_LABELS = {
     "zustand_behoben": "Problem behoben",
 }
 
+EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 CHINESE_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 
 
@@ -105,6 +107,17 @@ class ValidationError(Exception):
     def __init__(self, details: list[str]):
         super().__init__("Validation failed")
         self.details = details
+
+def is_valid_email(value: str) -> bool:
+    return bool(EMAIL_RE.match(value.strip()))
+
+def extract_first_line(value: str) -> str:
+    lines = value.split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return value.strip()
 
 
 def require_env(name: str, value: str) -> str:
@@ -401,6 +414,10 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
         return convert_service_date(raw_value)
     if zoho_field == "service_KW":
         return convert_service_kw(raw_value)
+    if zoho_field == "kunden_contact":
+        if not is_valid_email(raw_value):
+            return extract_first_line(raw_value)
+        return raw_value
     return raw_value
 
 
@@ -637,9 +654,11 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     tenant_token = get_feishu_tenant_token()
     notify_identity = resolve_user_identity(tenant_token, notify_open_id)
     resolved_notify_open_id = notify_identity.get("open_id", "").strip() or notify_open_id
-    resolved_notify_email = notify_identity.get("email", "").strip()
+    initiator_email = notify_identity.get("email", "").strip()
     record = get_feishu_record_by_id(tenant_token, record_id)
     record_fields = record.get("fields") or {}
+    customer_email = normalize_value(record_fields.get(EMAIL_FIELD))
+    resolved_notify_email = customer_email if is_valid_email(customer_email) else initiator_email
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
     print(
         json.dumps(
