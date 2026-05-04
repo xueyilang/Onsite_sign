@@ -147,17 +147,26 @@ def infer_english_given_name_from_email(email: str) -> str:
 
 
 def extract_techniker_name(record_fields: dict[str, Any]) -> str:
-    """Extract English given name from the Feishu '人员' (Personnel) field."""
+    """Extract English given names from the Feishu '人员' (Personnel) field.
+    1 person → 'Marco'
+    2 people → 'Marco & Tri'
+    """
     personnel = record_fields.get("人员")
     if not isinstance(personnel, list) or not personnel:
         return ""
-    first = personnel[0]
-    if isinstance(first, dict):
-        email = str(first.get("email") or "").strip()
-        en_name = str(first.get("en_name") or "").strip()
-        name = str(first.get("name") or "").strip()
-        return infer_english_given_name_from_email(email) or en_name or name
-    return str(first).strip()
+
+    def resolve_name(item: Any) -> str:
+        if isinstance(item, dict):
+            email = str(item.get("email") or "").strip()
+            en_name = str(item.get("en_name") or "").strip()
+            name = str(item.get("name") or "").strip()
+            return infer_english_given_name_from_email(email) or en_name or name
+        return str(item).strip()
+
+    names = [n for n in (resolve_name(p) for p in personnel[:2]) if n]
+    if len(names) == 1:
+        return names[0]
+    return f"{names[0]} & {names[1]}"
 
 
 def require_env(name: str, value: str) -> str:
