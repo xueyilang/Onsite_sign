@@ -491,7 +491,7 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
             return extract_first_line(raw_value)
         return raw_value
     if zoho_field in ("austasuch_sn_alte", "austasuch_sn_neue"):
-        return format_sn_field(raw_value)
+        return format_sn_field(raw_value).upper()
     return raw_value
 
 
