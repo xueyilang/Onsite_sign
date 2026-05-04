@@ -409,6 +409,20 @@ def convert_service_kw(raw: str) -> str:
     return str(int(match.group(1))) if match else raw
 
 
+SN_SPLIT_RE = re.compile(r"[\n,;/]+")
+
+
+def format_sn_field(raw_value: str) -> str:
+    parts = [p.strip() for p in SN_SPLIT_RE.split(raw_value.strip()) if p.strip()]
+    if not parts:
+        return raw_value.strip()
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]}  /  {parts[1]}"
+    return "\n".join(parts)
+
+
 def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
     if zoho_field == "service_date":
         return convert_service_date(raw_value)
@@ -418,6 +432,8 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
         if not is_valid_email(raw_value):
             return extract_first_line(raw_value)
         return raw_value
+    if zoho_field in ("austasuch_sn_alte", "austasuch_sn_neue"):
+        return format_sn_field(raw_value)
     return raw_value
 
 
