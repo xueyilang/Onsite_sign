@@ -461,7 +461,7 @@ def convert_service_kw(raw: str) -> str:
     return str(int(match.group(1))) if match else raw
 
 
-SN_SPLIT_RE = re.compile(r"[\r\n,;/]+")
+SN_SPLIT_RE = re.compile(r"[\r\n,;/，；、／]+")
 
 
 def format_sn_field(raw_value: str) -> str:
