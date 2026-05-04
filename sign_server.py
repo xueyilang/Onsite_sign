@@ -43,6 +43,9 @@ except ZoneInfoNotFoundError:
 WO_FIELD = "上门单号"
 ATTACHMENT_FIELD_NAME = "附件"
 EMAIL_FIELD = "Email Adresse"
+SN_ALT_FIELD = "SN(被取回)"
+SN_NEU_FIELD = "SN(被使用)"
+LINK_FIELD_PARENT = "父记录"
 
 REQUIRED_FIELD_MAPPING = {
     "service_date": ["日期"],
@@ -723,6 +726,48 @@ def find_document_id(payload: Any) -> str:
     return ""
 
 
+def find_child_records(tenant_token: str, parent_rid: str) -> list[dict]:
+    """Find records whose 父记录 links to parent_rid."""
+    children: list[dict] = []
+    for item in list_feishu_records(tenant_token):
+        if item["record_id"] == parent_rid:
+            continue
+        link_val = (item.get("fields") or {}).get(LINK_FIELD_PARENT)
+        if not isinstance(link_val, list):
+            continue
+        for entry in link_val:
+            rids = entry.get("record_ids") if isinstance(entry, dict) else None
+            if rids and parent_rid in rids:
+                children.append(item)
+                break
+    return children
+
+
+def merge_child_sn_fields(record_fields: dict[str, Any], child_records: list[dict]) -> dict[str, Any]:
+    """Merge SN(被取回) and SN(被使用) from child records into parent fields."""
+    alt_parts = [normalize_value(record_fields.get(SN_ALT_FIELD))]
+    neu_parts = [normalize_value(record_fields.get(SN_NEU_FIELD))]
+
+    for child in child_records:
+        cfields = child.get("fields") or {}
+        alt_v = normalize_value(cfields.get(SN_ALT_FIELD))
+        neu_v = normalize_value(cfields.get(SN_NEU_FIELD))
+        if alt_v:
+            alt_parts.append(alt_v)
+        if neu_v:
+            neu_parts.append(neu_v)
+
+    alt_merged = ", ".join(v for v in alt_parts if v)
+    neu_merged = ", ".join(v for v in neu_parts if v)
+
+    merged = dict(record_fields)
+    if alt_merged:
+        merged[SN_ALT_FIELD] = alt_merged
+    if neu_merged:
+        merged[SN_NEU_FIELD] = neu_merged
+    return merged
+
+
 def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_number: str = "") -> dict:
     print(json.dumps({"event": "process_sign_start.begin", "record_id": record_id, "notify_open_id": notify_open_id, "wo_number_hint": wo_number}, ensure_ascii=False), flush=True)
     tenant_token = get_feishu_tenant_token()
@@ -731,6 +776,11 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     initiator_email = notify_identity.get("email", "").strip()
     record = get_feishu_record_by_id(tenant_token, record_id)
     record_fields = record.get("fields") or {}
+
+    children = find_child_records(tenant_token, record_id)
+    if children:
+        record_fields = merge_child_sn_fields(record_fields, children)
+        print(json.dumps({"event": "process_sign_start.children_merged", "record_id": record_id, "child_count": len(children)}, ensure_ascii=False), flush=True)
     customer_email = normalize_value(record_fields.get(EMAIL_FIELD))
     resolved_notify_email = customer_email if is_valid_email(customer_email) else initiator_email
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
