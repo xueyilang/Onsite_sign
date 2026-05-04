@@ -337,6 +337,55 @@ One Zoho-specific value quirk existed earlier:
 - That typo has already been corrected in the current template.
 - No special value conversion is currently required for that field.
 
+## Parent-Child Records & Multi-SN Merge
+
+### Background
+
+A single `Onsite Service` record can only select one `标准品名` (standard product name) via the single-select field. When an onsite visit replaces multiple different spare parts, the engineer creates **child records** — one per spare part type — and links them to the parent.
+
+### How It Works
+
+| Direction | Field | Type | Who fills |
+|-----------|-------|------|-----------|
+| Child → Parent | `父记录` | SingleLink (type 18) | Child record links to parent |
+| Parent → Children | *(reverse lookup)* | N/A | `find_child_records()` scans table |
+
+**Feishu limitation**: DuplexLink (type 21) auto-backfill does **not** work for self-referencing (same table). For same-table parent-child, only SingleLink is reliable. Finding children from the parent requires a reverse scan.
+
+### SN Merge Before Signing
+
+When `/sign/start` is triggered on a **parent record**, the server:
+
+1. Scans all records via `find_child_records()` — finds records whose `父记录` links to the parent's `record_id`
+2. Calls `merge_child_sn_fields()` — combines `SN(被取回)` and `SN(被使用)` from parent + all children
+3. Merged values are comma-joined, then formatted by `format_sn_field()`:
+   - ≤2 total SNs → single line, `; ` separated
+   - 3+ total SNs → 2 lines max, evenly distributed
+4. All SN values are uppercased before writing to Zoho
+
+Supported separators in SN fields (auto-detected): `,` `;` `/` `\r` `\n` `，` `；` `、` `／`
+
+### Data Flow
+
+```
+Parent record (WO-123456)
+  SN(被取回): BAT-OLD
+  SN(被使用): BAT-NEW
+  ├── Child 1 (标准品名: WR)
+  │     SN(被取回): WR-OLD
+  │     SN(被使用): WR-NEW
+  ├── Child 2 (标准品名: Meter)
+  │     SN(被取回): METER-OLD
+  │     SN(被使用): METER-NEW
+  │
+  ▼ merge_child_sn_fields()
+  │
+  SN(被取回): BAT-OLD, WR-OLD, METER-OLD  → formatted: BAT-OLD; WR-OLD\nMETER-OLD
+  SN(被使用): BAT-NEW, WR-NEW, METER-NEW  → formatted: BAT-NEW; WR-NEW\nMETER-NEW
+  │
+  ▼ to Zoho template as field_text_data
+```
+
 ## Notes
 
 - Current scripts are still test scripts, not final production CLI tools.
