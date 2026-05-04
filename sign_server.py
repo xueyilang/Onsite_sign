@@ -413,14 +413,20 @@ SN_SPLIT_RE = re.compile(r"[\n,;/]+")
 
 
 def format_sn_field(raw_value: str) -> str:
+    """Distribute SNs across at most 2 lines, ;-separated per line."""
     parts = [p.strip() for p in SN_SPLIT_RE.split(raw_value.strip()) if p.strip()]
     if not parts:
         return raw_value.strip()
     if len(parts) == 1:
         return parts[0]
     if len(parts) == 2:
-        return f"{parts[0]}  /  {parts[1]}"
-    return "\n".join(parts)
+        return f"{parts[0]}; {parts[1]}"
+
+    # 3+ parts: distribute evenly across 2 lines
+    per_line = (len(parts) + 1) // 2  # ceil(N/2)
+    line1 = "; ".join(parts[:per_line])
+    line2 = "; ".join(parts[per_line:])
+    return f"{line1}\n{line2}"
 
 
 def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
@@ -758,6 +764,9 @@ class SignHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path in {"/", "/health"}:
             self._json_response(200, {"status": "ok"})
+            return
+        if self.path.startswith("/sign/embed"):
+            self.handle_embed_redirect()
             return
         self._json_response(404, {"error": "not_found"})
 
