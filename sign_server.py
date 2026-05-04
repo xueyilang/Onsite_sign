@@ -76,6 +76,7 @@ OPTIONAL_FIELD_MAPPING = {
     "arbeitszeit_von": ["Arbeitzeit_Von (Uhr)"],
     "arbeitszeit_bis": ["Arbeitzeit_Bis (Uhr)"],
     "entfernung": ["Entfernung (km)"],
+    "techniker": ["人员"],
 }
 
 FIELD_LABELS = {
@@ -98,6 +99,7 @@ FIELD_LABELS = {
     "arbeitszeit_von": "Arbeitzeit_Von (Uhr)",
     "arbeitszeit_bis": "Arbeitzeit_Bis (Uhr)",
     "entfernung": "Entfernung (km)",
+    "techniker": "Techniker",
     "zustand_Schaeden": "Schaeden vorhanden",
     "zustand_Installationsfehler": "Installationsfehler vorhanden",
     "zustand_PVfunktions": "PV funktionsfaehig",
@@ -128,6 +130,34 @@ def extract_first_line(value: str) -> str:
         if stripped:
             return stripped
     return value.strip()
+
+
+def infer_english_given_name_from_email(email: str) -> str:
+    """Extract English given name from email local part, e.g. marco.xue@... -> Marco."""
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return ""
+    local_part = email.split("@", 1)[0].strip()
+    if not local_part:
+        return ""
+    first_part = local_part.split(".", 1)[0].split("_", 1)[0].split("-", 1)[0].strip()
+    if not first_part:
+        return ""
+    return first_part[:1].upper() + first_part[1:]
+
+
+def extract_techniker_name(record_fields: dict[str, Any]) -> str:
+    """Extract English given name from the Feishu '人员' (Personnel) field."""
+    personnel = record_fields.get("人员")
+    if not isinstance(personnel, list) or not personnel:
+        return ""
+    first = personnel[0]
+    if isinstance(first, dict):
+        email = str(first.get("email") or "").strip()
+        en_name = str(first.get("en_name") or "").strip()
+        name = str(first.get("name") or "").strip()
+        return infer_english_given_name_from_email(email) or en_name or name
+    return str(first).strip()
 
 
 def require_env(name: str, value: str) -> str:
@@ -469,7 +499,10 @@ def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     for zoho_field, feishu_fields in REQUIRED_FIELD_MAPPING.items():
         mapped[zoho_field] = map_zoho_field_value(zoho_field, get_record_field_value(record_fields, feishu_fields))
     for zoho_field, feishu_fields in OPTIONAL_FIELD_MAPPING.items():
-        raw_value = get_record_field_value(record_fields, feishu_fields)
+        if zoho_field == "techniker":
+            raw_value = extract_techniker_name(record_fields)
+        else:
+            raw_value = get_record_field_value(record_fields, feishu_fields)
         if raw_value:
             mapped[zoho_field] = map_zoho_field_value(zoho_field, raw_value)
     return mapped
