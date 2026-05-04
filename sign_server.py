@@ -71,6 +71,11 @@ OPTIONAL_FIELD_MAPPING = {
     "austasuch_sn_alte": ["SN(被取回)"],
     "austasuch_sn_neue": ["SN(被使用)"],
     "service_anmerkungen": ["vorort_anmerkungen"],
+    "abfahrt": ["Abfahrt (Uhr)"],
+    "ankunft": ["Ankunft (Uhr)"],
+    "arbeitszeit_von": ["Arbeitzeit_Von (Uhr)"],
+    "arbeitszeit_bis": ["Arbeitzeit_Bis (Uhr)"],
+    "entfernung": ["Entfernung (km)"],
 }
 
 FIELD_LABELS = {
@@ -88,6 +93,11 @@ FIELD_LABELS = {
     "service_anmerkungen": "vorort_anmerkungen",
     "austasuch_sn_alte": "SN(被取回)",
     "austasuch_sn_neue": "SN(被使用)",
+    "abfahrt": "Abfahrt (Uhr)",
+    "ankunft": "Ankunft (Uhr)",
+    "arbeitszeit_von": "Arbeitzeit_Von (Uhr)",
+    "arbeitszeit_bis": "Arbeitzeit_Bis (Uhr)",
+    "entfernung": "Entfernung (km)",
     "zustand_Schaeden": "Schaeden vorhanden",
     "zustand_Installationsfehler": "Installationsfehler vorhanden",
     "zustand_PVfunktions": "PV funktionsfaehig",
