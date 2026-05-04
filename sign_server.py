@@ -71,12 +71,12 @@ OPTIONAL_FIELD_MAPPING = {
     "austasuch_sn_alte": ["SN(被取回)"],
     "austasuch_sn_neue": ["SN(被使用)"],
     "service_anmerkungen": ["vorort_anmerkungen"],
-    "abfahrt": ["Abfahrt (Uhr)"],
-    "ankunft": ["Ankunft (Uhr)"],
-    "arbeitszeit_von": ["Arbeitzeit_Von (Uhr)"],
-    "arbeitszeit_bis": ["Arbeitzeit_Bis (Uhr)"],
-    "entfernung": ["Entfernung (km)"],
-    "techniker": ["人员"],
+    "Abfahrt": ["Abfahrt (Uhr)"],
+    "Ankunft": ["Ankunft (Uhr)"],
+    "Von": ["Arbeitzeit_Von (Uhr)"],
+    "Bis": ["Arbeitzeit_Bis (Uhr)"],
+    "Entfernung": ["Entfernung (km)"],
+    "Techniker": ["人员"],
 }
 
 FIELD_LABELS = {
@@ -94,12 +94,12 @@ FIELD_LABELS = {
     "service_anmerkungen": "vorort_anmerkungen",
     "austasuch_sn_alte": "SN(被取回)",
     "austasuch_sn_neue": "SN(被使用)",
-    "abfahrt": "Abfahrt (Uhr)",
-    "ankunft": "Ankunft (Uhr)",
-    "arbeitszeit_von": "Arbeitzeit_Von (Uhr)",
-    "arbeitszeit_bis": "Arbeitzeit_Bis (Uhr)",
-    "entfernung": "Entfernung (km)",
-    "techniker": "Techniker",
+    "Abfahrt": "Abfahrt (Uhr)",
+    "Ankunft": "Ankunft (Uhr)",
+    "Von": "Arbeitzeit_Von (Uhr)",
+    "Bis": "Arbeitzeit_Bis (Uhr)",
+    "Entfernung": "Entfernung (km)",
+    "Techniker": "Techniker",
     "zustand_Schaeden": "Schaeden vorhanden",
     "zustand_Installationsfehler": "Installationsfehler vorhanden",
     "zustand_PVfunktions": "PV funktionsfaehig",
@@ -508,7 +508,7 @@ def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     for zoho_field, feishu_fields in REQUIRED_FIELD_MAPPING.items():
         mapped[zoho_field] = map_zoho_field_value(zoho_field, get_record_field_value(record_fields, feishu_fields))
     for zoho_field, feishu_fields in OPTIONAL_FIELD_MAPPING.items():
-        if zoho_field == "techniker":
+        if zoho_field == "Techniker":
             raw_value = extract_techniker_name(record_fields)
         else:
             raw_value = get_record_field_value(record_fields, feishu_fields)
