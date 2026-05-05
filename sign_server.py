@@ -551,29 +551,37 @@ def get_zoho_template_detail(token: str) -> dict:
 
 def build_embedded_actions(template: dict, recipient_name: str, recipient_email: str, cc_email: str = "", cc_name: str = "") -> list[dict]:
     actions = []
+    resolved_cc_email = cc_email.strip()
+    if resolved_cc_email.lower() == recipient_email.strip().lower():
+        resolved_cc_email = ""
     for action in template.get("actions", []):
-        actions.append(
-            {
-                "action_id": action["action_id"],
-                "action_type": action["action_type"],
-                "recipient_name": recipient_name,
-                "recipient_email": recipient_email,
-                "signing_order": action.get("signing_order", 1),
-                "verify_recipient": action.get("verify_recipient", False),
-                "private_notes": action.get("private_notes", ""),
-                "send_completed_document": True,
-                "is_embedded": True,
-            }
-        )
-    if cc_email and cc_email.strip().lower() != recipient_email.strip().lower():
-        actions.append(
-            {
-                "action_type": "VIEW",
-                "recipient_name": cc_name or cc_email.split("@")[0],
-                "recipient_email": cc_email.strip(),
-                "send_completed_document": True,
-            }
-        )
+        atype = action.get("action_type", "SIGN")
+        if atype == "VIEW":
+            if not resolved_cc_email:
+                continue
+            actions.append(
+                {
+                    "action_id": action["action_id"],
+                    "action_type": "VIEW",
+                    "recipient_name": cc_name or resolved_cc_email.split("@")[0],
+                    "recipient_email": resolved_cc_email,
+                    "send_completed_document": True,
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "action_id": action["action_id"],
+                    "action_type": atype,
+                    "recipient_name": recipient_name,
+                    "recipient_email": recipient_email,
+                    "signing_order": action.get("signing_order", 1),
+                    "verify_recipient": action.get("verify_recipient", False),
+                    "private_notes": action.get("private_notes", ""),
+                    "send_completed_document": True,
+                    "is_embedded": True,
+                }
+            )
     return actions
 
 
@@ -814,7 +822,7 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
         return {"ok": False, "wo": resolved_wo, "record_id": record_id, "error_type": "validation", "validation_errors": exc.details, "feishu_message_response": feishu_response}
 
     created = create_zoho_embedded_request(zoho_token, resolved_wo, mapped_fields, resolved_notify_email, initiator_email, initiator_name)
-    action_id = created["actions"][0]["action_id"]
+    action_id = next(a["action_id"] for a in created["actions"] if a.get("action_type") == "SIGN")
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)
     print(json.dumps({"event": "process_sign_start.zoho_request_created", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "action_id": action_id}, ensure_ascii=False), flush=True)
