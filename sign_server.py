@@ -135,6 +135,17 @@ def extract_first_line(value: str) -> str:
     return value.strip()
 
 
+def extract_first_email(value: str) -> str:
+    if not value or not value.strip():
+        return ""
+    parts = re.split(r"[,;\n\r]+", value)
+    for part in parts:
+        part = part.strip()
+        if is_valid_email(part):
+            return part
+    return ""
+
+
 def infer_english_given_name_from_email(email: str) -> str:
     """Extract English given name from email local part, e.g. marco.xue@... -> Marco."""
     email = (email or "").strip().lower()
@@ -490,9 +501,10 @@ def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
     if zoho_field == "service_KW":
         return convert_service_kw(raw_value)
     if zoho_field == "kunden_contact":
-        if not is_valid_email(raw_value):
-            return extract_first_line(raw_value)
-        return raw_value
+        first_email = extract_first_email(raw_value)
+        if first_email:
+            return first_email
+        return extract_first_line(raw_value)
     if zoho_field in ("austasuch_sn_alte", "austasuch_sn_neue"):
         return format_sn_field(raw_value).upper()
     return raw_value
@@ -796,8 +808,9 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     if children:
         record_fields = merge_child_sn_fields(record_fields, children)
         print(json.dumps({"event": "process_sign_start.children_merged", "record_id": record_id, "child_count": len(children)}, ensure_ascii=False), flush=True)
-    customer_email = normalize_value(record_fields.get(EMAIL_FIELD))
-    resolved_notify_email = customer_email if is_valid_email(customer_email) else initiator_email
+    customer_email_raw = normalize_value(record_fields.get(EMAIL_FIELD))
+    first_customer_email = extract_first_email(customer_email_raw)
+    resolved_notify_email = first_customer_email or "service@alpha-ess.de"
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
     print(
         json.dumps(
