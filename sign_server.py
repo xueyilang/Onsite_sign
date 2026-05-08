@@ -301,6 +301,13 @@ def normalize_value(value: Any) -> str:
     return str(value).strip()
 
 
+_CN_PUNCT_TABLE = str.maketrans("，。；：？！、（）【】「」『』《》……——", ",.;:?!,()[]\"\"''<>...--")
+
+
+def normalize_cn_punctuation(text: str) -> str:
+    return text.translate(_CN_PUNCT_TABLE)
+
+
 def get_record_field_value(record_fields: dict[str, Any], field_names: list[str]) -> str:
     for field_name in field_names:
         if field_name in record_fields:
@@ -524,14 +531,14 @@ def extract_wo_from_request_name(request_name: str) -> str:
 def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     mapped: dict[str, str] = {}
     for zoho_field, feishu_fields in REQUIRED_FIELD_MAPPING.items():
-        mapped[zoho_field] = map_zoho_field_value(zoho_field, get_record_field_value(record_fields, feishu_fields))
+        mapped[zoho_field] = normalize_cn_punctuation(map_zoho_field_value(zoho_field, get_record_field_value(record_fields, feishu_fields)))
     for zoho_field, feishu_fields in OPTIONAL_FIELD_MAPPING.items():
         if zoho_field == "Techniker":
             raw_value = extract_techniker_name(record_fields)
         else:
             raw_value = get_record_field_value(record_fields, feishu_fields)
         if raw_value:
-            mapped[zoho_field] = map_zoho_field_value(zoho_field, raw_value)
+            mapped[zoho_field] = normalize_cn_punctuation(map_zoho_field_value(zoho_field, raw_value))
     return mapped
 
 
