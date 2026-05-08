@@ -301,7 +301,7 @@ def normalize_value(value: Any) -> str:
     return str(value).strip()
 
 
-_CN_PUNCT_TABLE = str.maketrans("，。；：？！、（）【】「」『』《》……——", ",.;:?!,()[]\"\"''<>...--")
+_CN_PUNCT_TABLE = str.maketrans("，。；：？！、（）【】「」『』《》……——", ",.;:?!,()[]\"\"''<>..--")
 
 
 def normalize_cn_punctuation(text: str) -> str:
