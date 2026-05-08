@@ -3,6 +3,7 @@ services:
     name: onsite-sign-server
     runtime: python
     plan: free
+    region: frankfurt
     buildCommand: ""
     startCommand: python sign_server.py
     healthCheckPath: /health
