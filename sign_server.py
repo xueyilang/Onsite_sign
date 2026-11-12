@@ -61,7 +61,8 @@ class SignRegion:
     name: str
     template_env: str  # env var holding the Zoho template id
     template_id: str
-    embed_locale: str
+    # Language of the embedded signing page and of every Zoho email to the recipients (incl. the completed PDF).
+    language: str
     fallback_email: str
     # Feishu stores the checklist answers in German; the English template needs them translated.
     zustand_values: dict[str, str] = field(default_factory=dict)
@@ -725,7 +726,7 @@ def get_zoho_template_detail(token: str, region: SignRegion = REGION_DE) -> dict
     return response["templates"]
 
 
-def build_embedded_actions(template: dict, recipient_name: str, recipient_email: str, cc_email: str = "", cc_name: str = "") -> list[dict]:
+def build_embedded_actions(template: dict, recipient_name: str, recipient_email: str, cc_email: str = "", cc_name: str = "", language: str = ZOHO_EMBED_LOCALE) -> list[dict]:
     actions = []
     resolved_cc_email = cc_email.strip()
     if resolved_cc_email.lower() == recipient_email.strip().lower():
@@ -742,6 +743,7 @@ def build_embedded_actions(template: dict, recipient_name: str, recipient_email:
                     "recipient_name": cc_name or resolved_cc_email.split("@")[0],
                     "recipient_email": resolved_cc_email,
                     "send_completed_document": True,
+                    "language": language,
                 }
             )
         else:
@@ -756,19 +758,20 @@ def build_embedded_actions(template: dict, recipient_name: str, recipient_email:
                     "private_notes": action.get("private_notes", ""),
                     "send_completed_document": True,
                     "is_embedded": True,
+                    "language": language,
                 }
             )
     return actions
 
 
-def create_zoho_embedded_request(token: str, template: dict, wo_number: str, mapped_fields: dict[str, str], recipient_email: str, cc_email: str = "", cc_name: str = "") -> dict:
+def create_zoho_embedded_request(token: str, template: dict, wo_number: str, mapped_fields: dict[str, str], recipient_email: str, cc_email: str = "", cc_name: str = "", language: str = ZOHO_EMBED_LOCALE) -> dict:
     template_id = template["template_id"]
     recipient_name = mapped_fields.get("kunden_name", "").strip() or "Kunden Unterschrift"
     resolved_recipient_email = recipient_email.strip() or "service@alpha-ess.de"
     payload = {
         "templates": {
             "request_name": build_request_name(wo_number),
-            "actions": build_embedded_actions(template, recipient_name, resolved_recipient_email, cc_email, cc_name),
+            "actions": build_embedded_actions(template, recipient_name, resolved_recipient_email, cc_email, cc_name, language),
             "field_data": {"field_text_data": mapped_fields, "field_date_data": {}, "field_boolean_data": {}},
         }
     }
@@ -1035,12 +1038,12 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
         feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} validation failed:\n" + "\n".join(exc.details))
         return {"ok": False, "wo": resolved_wo, "record_id": record_id, "error_type": "validation", "validation_errors": exc.details, "feishu_message_response": feishu_response}
 
-    created = create_zoho_embedded_request(zoho_token, template, resolved_wo, mapped_fields, resolved_notify_email, initiator_email, initiator_name)
+    created = create_zoho_embedded_request(zoho_token, template, resolved_wo, mapped_fields, resolved_notify_email, initiator_email, initiator_name, region.language)
     action_id = next(a["action_id"] for a in created["actions"] if a.get("action_type") == "SIGN")
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)
     print(json.dumps({"event": "process_sign_start.zoho_request_created", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "action_id": action_id}, ensure_ascii=False), flush=True)
-    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id), region.embed_locale)
+    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id), region.language)
     feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} embedded sign link:\n{embed_link}")
     print(json.dumps({"event": "process_sign_start.completed", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "message_sent": feishu_response.get("msg")}, ensure_ascii=False), flush=True)
     return {"ok": True, "wo": resolved_wo, "record_id": record_id, "request_id": request_id, "action_id": action_id, "request_status": created.get("request_status"), "embed_link": embed_link, "feishu_message_response": feishu_response}

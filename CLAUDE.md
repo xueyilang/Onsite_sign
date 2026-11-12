@@ -141,11 +141,13 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 | | 德国区（默认） | BENELUX（`方向 = BENELUX`） |
 |---|---|---|
 | Zoho 模板 | `ZOHO_TEMPLATE_ID`（德语） | `ZOHO_TEMPLATE_ID_BENELUX`（英文，页脚 Alpha ESS Benelux B.V.） |
-| 签署页语言 | `de` | `en` |
+| 签署页 + Zoho 邮件语言（含签完后发给客户和工程师的 PDF 邮件） | `de` | `en` |
 | 兜底收件邮箱 | `service@alpha-ess.de` | `servicebenelux@alphaess.nl` |
 | 状态字段值 | `Ja` / `Nein` / `Nicht vorhanden` 原样 | 翻译为 `Yes` / `No` / `Not available` |
 
-英文模板与德语模板字段一一对应、坐标完全相同；区别是 9 个 `zustand_*` 在英文模板里是**只读文本框**（Zoho API 不能创建下拉框）。模板源文件见 Downloads 下 `ServiceProtocol-EN.docx`（Word 无订阅，只能用“打印 → 存储为 PDF”导出）。
+英文模板与德语模板字段一一对应、坐标完全相同；区别是 9 个 `zustand_*` 在英文模板里是**普通文本框**（Zoho API 不能创建下拉框）。**不要把预填文本框设为只读**：Zoho 不会把只读文本框的预填值渲染进 PDF（签署前和签完都是空的）。
+
+邮件语言由 createdocument 时每个收件人的 `language` 决定（`build_embedded_actions`），不传时用账户默认 `de`。模板源文件见 Downloads 下 `ServiceProtocol-EN.docx`（Word 无订阅，只能用“打印 → 存储为 PDF”导出）。
 
 ### 签署请求命名
 Zoho 请求名格式：`VorortProtocol_{工单号}`
