@@ -4,15 +4,18 @@ import hmac
 import json
 import os
 import re
+import threading
+import time
 import traceback
 import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -117,6 +120,21 @@ FIELD_LABELS = {
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 
+# --- PDF field overflow -------------------------------------------------------
+# Zoho renders template text fields in Roboto and silently clips text that does not fit the box.
+# Advance widths (1/1000 em) generated from Roboto-Regular.ttf; unknown characters use a wide fallback.
+_ROBOTO_CHARS = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\xa0¡¢£¤¥¦§¨©ª«¬\xad®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ€–—‘’‚“”„…•‹›°ŒœŠšŽžŸƒ†‡‰™'
+_ROBOTO_WIDTHS = (248, 257, 320, 616, 562, 732, 622, 174, 342, 348, 431, 567, 196, 276, 263, 412, 562, 562, 562, 562, 562, 562, 562, 562, 562, 562, 242, 211, 508, 549, 522, 472, 898, 652, 623, 651, 656, 568, 553, 681, 713, 272, 552, 627, 538, 873, 713, 688, 631, 688, 616, 593, 597, 648, 636, 887, 627, 601, 599, 265, 410, 265, 418, 451, 309, 544, 561, 523, 564, 530, 347, 561, 551, 243, 239, 507, 243, 876, 552, 570, 561, 568, 338, 516, 327, 551, 484, 751, 496, 473, 496, 338, 244, 338, 680, 248, 244, 547, 581, 713, 525, 240, 613, 418, 786, 447, 469, 554, 276, 786, 458, 374, 534, 367, 367, 313, 566, 489, 261, 248, 367, 455, 469, 732, 776, 778, 473, 652, 652, 652, 652, 652, 652, 935, 651, 568, 568, 568, 568, 272, 272, 272, 272, 670, 713, 688, 688, 688, 688, 688, 533, 688, 648, 648, 648, 648, 601, 591, 595, 544, 544, 544, 544, 544, 544, 844, 523, 530, 530, 530, 530, 247, 247, 247, 247, 586, 552, 570, 570, 570, 570, 570, 571, 566, 551, 551, 551, 551, 473, 576, 473, 562, 656, 781, 200, 200, 199, 354, 357, 344, 669, 337, 300, 300, 374, 954, 908, 593, 516, 599, 496, 601, 340, 551, 570, 958, 625)
+ROBOTO_WIDTH = dict(zip(_ROBOTO_CHARS, _ROBOTO_WIDTHS))
+ROBOTO_FALLBACK_WIDTH = 650
+# Calibrated against signed PDFs: a box of height h at font size s shows int(h / (s * 1.17)) lines.
+LINE_HEIGHT_FACTOR = 1.17
+BOX_PADDING_PT = 2
+# Multi-line boxes whose line breaks only waste space; their lines are joined into one flowing text.
+JOIN_LINES_FIELDS = {"kunden_addr"}
+# Serial numbers cannot be shortened, so their overflow message points to the remarks field instead.
+SN_FIELDS = {"system_sn", "austasuch_sn_alte", "austasuch_sn_neue"}
+
 
 class ValidationError(Exception):
     def __init__(self, details: list[str]):
@@ -189,29 +207,35 @@ def require_env(name: str, value: str) -> str:
     raise RuntimeError(f"Missing required environment variable: {name}")
 
 
+def _http_open(method: str, url: str, headers: dict[str, str], body: bytes | None, timeout: int) -> tuple[bytes, str]:
+    for attempt in (1, 2):
+        request = urllib.request.Request(url=url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read(), response.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            # A cached Zoho access token can be revoked early (Zoho caps live tokens per refresh token);
+            # fetch a fresh one and retry once.
+            if attempt == 1 and exc.code == 401 and headers.get("Authorization", "").startswith("Zoho-oauthtoken ") and _uses_zoho_refresh_token():
+                _TOKEN_CACHE.pop("zoho", None)
+                headers = {**headers, "Authorization": f"Zoho-oauthtoken {get_zoho_access_token()}"}
+                print(json.dumps({"event": "zoho.token_refreshed_after_401", "url": url}, ensure_ascii=False), flush=True)
+                continue
+            raise RuntimeError(f"HTTP {exc.code} calling {url}: {body_text}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+    raise AssertionError("unreachable")
+
+
 def api_request(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> dict:
-    request = urllib.request.Request(url=url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} calling {url}: {body_text}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+    raw, _ = _http_open(method, url, headers, body, timeout=60)
+    text = raw.decode("utf-8", errors="replace")
+    return json.loads(text) if text else {}
 
 
 def binary_request(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> tuple[bytes, str]:
-    request = urllib.request.Request(url=url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            return response.read(), response.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} calling {url}: {body_text}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Network error calling {url}: {exc}") from exc
+    return _http_open(method, url, headers, body, timeout=120)
 
 
 def get_bearer_token(auth_header: str) -> str:
@@ -238,26 +262,50 @@ def verify_zoho_webhook_signature(raw_body: bytes, signature: str) -> bool:
     return bool(signature) and hmac.compare_digest(signature.strip().lower(), expected.lower())
 
 
+# Access tokens are reused until shortly before they expire (Zoho ~1h, Feishu ~2h).
+_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_TOKEN_LOCK = threading.Lock()
+_TOKEN_REFRESH_MARGIN_SECONDS = 300
+
+
+def _cached_token(name: str, fetch: Callable[[], tuple[str, int]]) -> str:
+    with _TOKEN_LOCK:
+        cached = _TOKEN_CACHE.get(name)
+        if cached and cached[1] - time.time() > _TOKEN_REFRESH_MARGIN_SECONDS:
+            return cached[0]
+        token, expires_in = fetch()
+        _TOKEN_CACHE[name] = (token, time.time() + expires_in)
+        return token
+
+
+def _uses_zoho_refresh_token() -> bool:
+    return bool(ZOHO_REFRESH_TOKEN and ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET)
+
+
 def get_zoho_access_token() -> str:
-    if ZOHO_REFRESH_TOKEN and ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET:
-        response = api_request(
-            "POST",
-            f"{ZOHO_ACCOUNTS_BASE_URL}/oauth/v2/token",
-            {"Content-Type": "application/x-www-form-urlencoded"},
-            urllib.parse.urlencode(
-                {
-                    "refresh_token": ZOHO_REFRESH_TOKEN,
-                    "client_id": ZOHO_CLIENT_ID,
-                    "client_secret": ZOHO_CLIENT_SECRET,
-                    "grant_type": "refresh_token",
-                }
-            ).encode("utf-8"),
-        )
-        access_token = str(response.get("access_token") or "").strip()
-        if not access_token:
-            raise RuntimeError(f"Zoho refresh-token exchange returned no access_token: {json.dumps(response, ensure_ascii=False)}")
-        return access_token
+    if _uses_zoho_refresh_token():
+        return _cached_token("zoho", _fetch_zoho_access_token)
     return require_env("ZOHO_SIGN_TOKEN", ZOHO_SIGN_TOKEN)
+
+
+def _fetch_zoho_access_token() -> tuple[str, int]:
+    response = api_request(
+        "POST",
+        f"{ZOHO_ACCOUNTS_BASE_URL}/oauth/v2/token",
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        urllib.parse.urlencode(
+            {
+                "refresh_token": ZOHO_REFRESH_TOKEN,
+                "client_id": ZOHO_CLIENT_ID,
+                "client_secret": ZOHO_CLIENT_SECRET,
+                "grant_type": "refresh_token",
+            }
+        ).encode("utf-8"),
+    )
+    access_token = str(response.get("access_token") or "").strip()
+    if not access_token:
+        raise RuntimeError(f"Zoho refresh-token exchange returned no access_token: {json.dumps(response, ensure_ascii=False)}")
+    return access_token, int(response.get("expires_in") or 3600)
 
 
 def load_request_map() -> dict[str, dict[str, str]]:
@@ -325,6 +373,10 @@ def get_field_label(field_name: str) -> str:
 
 
 def get_feishu_tenant_token() -> str:
+    return _cached_token("feishu", _fetch_feishu_tenant_token)
+
+
+def _fetch_feishu_tenant_token() -> tuple[str, int]:
     app_id = require_env("FEISHU_APP_ID", FEISHU_APP_ID)
     app_secret = require_env("FEISHU_APP_SECRET", FEISHU_APP_SECRET)
     response = api_request(
@@ -335,7 +387,7 @@ def get_feishu_tenant_token() -> str:
     )
     if response.get("code") != 0:
         raise RuntimeError(f"Feishu auth failed: {json.dumps(response, ensure_ascii=False)}")
-    return response["tenant_access_token"]
+    return response["tenant_access_token"], int(response.get("expire") or 7200)
 
 
 def list_feishu_records(tenant_token: str) -> list[dict]:
@@ -418,7 +470,7 @@ def resolve_user_identity(tenant_token: str, raw_target: str) -> dict[str, str]:
         return {"open_id": target, "email": "", "name": ""}
 
     candidates: list[tuple[str, str, str, str]] = []  # (matched_value, open_id, email, display_name)
-    for user in list_feishu_users(tenant_token):
+    for user in users:
         open_id = str(user.get("open_id") or "").strip()
         if not open_id:
             continue
@@ -486,20 +538,11 @@ SN_SPLIT_RE = re.compile(r"[\r\n,;/，；、／]+")
 
 
 def format_sn_field(raw_value: str) -> str:
-    """Distribute SNs across at most 2 lines, ;-separated per line."""
+    """Join SNs with '; ' on one flowing line and let Zoho wrap by width (forced line breaks wasted box space)."""
     parts = [p.strip() for p in SN_SPLIT_RE.split(raw_value.strip()) if p.strip()]
     if not parts:
         return raw_value.strip()
-    if len(parts) == 1:
-        return parts[0]
-    if len(parts) == 2:
-        return f"{parts[0]}; {parts[1]}"
-
-    # 3+ parts: distribute evenly across 2 lines
-    per_line = (len(parts) + 1) // 2  # ceil(N/2)
-    line1 = "; ".join(parts[:per_line])
-    line2 = "; ".join(parts[per_line:])
-    return f"{line1}\n{line2}"
+    return "; ".join(parts)
 
 
 def map_zoho_field_value(zoho_field: str, raw_value: str) -> str:
@@ -542,7 +585,79 @@ def build_mapped_fields(record_fields: dict[str, Any]) -> dict[str, str]:
     return mapped
 
 
-def validate_mapped_fields(mapped_fields: dict[str, str]) -> None:
+def text_width_pt(text: str, font_size: float) -> float:
+    return sum(ROBOTO_WIDTH.get(ch, ROBOTO_FALLBACK_WIDTH) for ch in text) * font_size / 1000
+
+
+def count_wrapped_lines(text: str, box_width_pt: float, font_size: float) -> int:
+    """Word-wrap like Zoho: break at spaces; a single word wider than the box still takes one line."""
+    lines = 0
+    for paragraph in text.split("\n"):
+        current = ""
+        for word in paragraph.split(" "):
+            candidate = f"{current} {word}" if current else word
+            if current and text_width_pt(candidate, font_size) > box_width_pt:
+                lines += 1
+                current = word
+            else:
+                current = candidate
+        lines += 1
+    return lines
+
+
+def get_text_field_boxes(template: dict) -> dict[str, tuple[float, float, int]]:
+    """field_label -> (usable width pt, font size pt, visible lines) for the template's text fields."""
+    boxes: dict[str, tuple[float, float, int]] = {}
+    for document in template.get("document_fields") or []:
+        for field in document.get("fields") or []:
+            if field.get("field_type_name") != "Textfield":
+                continue
+            font_size = float((field.get("text_property") or {}).get("font_size") or 8)
+            width = float(field.get("abs_width") or 0) - BOX_PADDING_PT
+            lines = max(1, int(float(field.get("abs_height") or 0) / (font_size * LINE_HEIGHT_FACTOR)))
+            boxes[field["field_label"]] = (width, font_size, lines)
+    return boxes
+
+
+def tidy_for_box(zoho_field: str, value: str, box: tuple[float, float, int]) -> str:
+    """Drop blank lines and repeated spaces. Single-line boxes get their lines joined with ', ';
+    JOIN_LINES_FIELDS are joined only when their line-per-item layout would not fit the box."""
+    width, font_size, max_lines = box
+    lines = [line.strip() for line in re.sub(r"[ \t]+", " ", value.replace("\r", "")).split("\n") if line.strip()]
+    tidy = "\n".join(lines)
+    if max_lines == 1 or (zoho_field in JOIN_LINES_FIELDS and count_wrapped_lines(tidy, width, font_size) > max_lines):
+        return ", ".join(line.rstrip(",;") for line in lines)
+    return tidy
+
+
+def fit_fields_to_boxes(mapped_fields: dict[str, str], boxes: dict[str, tuple[float, float, int]]) -> dict[str, str]:
+    return {
+        zoho_field: tidy_for_box(zoho_field, value, boxes[zoho_field]) if value and zoho_field in boxes else value
+        for zoho_field, value in mapped_fields.items()
+    }
+
+
+def find_overflowing_fields(mapped_fields: dict[str, str], boxes: dict[str, tuple[float, float, int]]) -> list[str]:
+    errors: list[str] = []
+    for zoho_field, value in mapped_fields.items():
+        if not value or zoho_field not in boxes:
+            continue
+        width, font_size, max_lines = boxes[zoho_field]
+        needed = count_wrapped_lines(value, width, font_size)
+        if needed > max_lines and zoho_field in SN_FIELDS:
+            errors.append(
+                f"Field '{get_field_label(zoho_field)}' has too many serial numbers for the PDF: needs {needed} lines but only {max_lines} fit. "
+                f"Please move the extra serial numbers to '{get_field_label('service_anmerkungen')}'."
+            )
+        elif needed > max_lines:
+            errors.append(
+                f"Field '{get_field_label(zoho_field)}' is too long for the PDF: needs {needed} lines but only {max_lines} fit "
+                f"({len(value)} characters now, about {len(value) * max_lines // needed} fit). Please shorten it."
+            )
+    return errors
+
+
+def validate_mapped_fields(mapped_fields: dict[str, str], boxes: dict[str, tuple[float, float, int]] | None = None) -> None:
     errors: list[str] = []
     for zoho_field in REQUIRED_FIELD_MAPPING:
         value = mapped_fields.get(zoho_field, "").strip()
@@ -556,6 +671,8 @@ def validate_mapped_fields(mapped_fields: dict[str, str]) -> None:
             message = f"Field '{get_field_label(zoho_field)}' is invalid: value should not contain Chinese characters. Current value: {value}"
             if message not in errors:
                 errors.append(message)
+    if boxes:
+        errors.extend(find_overflowing_fields(mapped_fields, boxes))
     if errors:
         raise ValidationError(errors)
 
@@ -604,9 +721,8 @@ def build_embedded_actions(template: dict, recipient_name: str, recipient_email:
     return actions
 
 
-def create_zoho_embedded_request(token: str, wo_number: str, mapped_fields: dict[str, str], recipient_email: str, cc_email: str = "", cc_name: str = "") -> dict:
+def create_zoho_embedded_request(token: str, template: dict, wo_number: str, mapped_fields: dict[str, str], recipient_email: str, cc_email: str = "", cc_name: str = "") -> dict:
     template_id = require_env("ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID)
-    template = get_zoho_template_detail(token)
     recipient_name = mapped_fields.get("kunden_name", "").strip() or "Kunden Unterschrift"
     resolved_recipient_email = recipient_email.strip() or "service@alpha-ess.de"
     payload = {
@@ -759,21 +875,45 @@ def find_document_id(payload: Any) -> str:
     return ""
 
 
+def _join_text_segments(value: Any) -> Any:
+    """Search API returns text as [{"text": ..., "type": ...}] segments; list API returns the joined string."""
+    if isinstance(value, list) and value and all(isinstance(seg, dict) and "text" in seg and "record_ids" not in seg for seg in value):
+        return "".join(str(seg.get("text") or "") for seg in value)
+    return value
+
+
 def find_child_records(tenant_token: str, parent_rid: str) -> list[dict]:
-    """Find records whose 父记录 links to parent_rid."""
+    """Find records whose 父记录 links to parent_rid (server-side filter instead of a full-table scan)."""
+    app_token = require_env("FEISHU_APP_TOKEN", FEISHU_APP_TOKEN)
+    table_id = require_env("FEISHU_TABLE_ID", FEISHU_TABLE_ID)
+    body = json.dumps(
+        {
+            "field_names": [LINK_FIELD_PARENT, SN_ALT_FIELD, SN_NEU_FIELD],
+            "filter": {"conjunction": "and", "conditions": [{"field_name": LINK_FIELD_PARENT, "operator": "is", "value": [parent_rid]}]},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
     children: list[dict] = []
-    for item in list_feishu_records(tenant_token):
-        if item["record_id"] == parent_rid:
-            continue
-        link_val = (item.get("fields") or {}).get(LINK_FIELD_PARENT)
-        if not isinstance(link_val, list):
-            continue
-        for entry in link_val:
-            rids = entry.get("record_ids") if isinstance(entry, dict) else None
-            if rids and parent_rid in rids:
-                children.append(item)
-                break
-    return children
+    page_token = ""
+    while True:
+        query = urllib.parse.urlencode({k: v for k, v in {"page_size": 500, "page_token": page_token or None}.items() if v is not None})
+        response = api_request(
+            "POST",
+            f"{FEISHU_BASE_URL}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/search?{query}",
+            {"Authorization": f"Bearer {tenant_token}", "Content-Type": "application/json; charset=utf-8"},
+            body,
+        )
+        if response.get("code") != 0:
+            raise RuntimeError(f"Feishu search child records failed: {json.dumps(response, ensure_ascii=False)}")
+        data = response.get("data") or {}
+        for item in data.get("items") or []:
+            if item.get("record_id") == parent_rid:
+                continue
+            fields = {name: _join_text_segments(value) for name, value in (item.get("fields") or {}).items()}
+            children.append({**item, "fields": fields})
+        if not data.get("has_more"):
+            return children
+        page_token = data.get("page_token") or ""
 
 
 def merge_child_sn_fields(record_fields: dict[str, Any], child_records: list[dict]) -> dict[str, Any]:
@@ -804,14 +944,21 @@ def merge_child_sn_fields(record_fields: dict[str, Any], child_records: list[dic
 def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_number: str = "") -> dict:
     print(json.dumps({"event": "process_sign_start.begin", "record_id": record_id, "notify_open_id": notify_open_id, "wo_number_hint": wo_number}, ensure_ascii=False), flush=True)
     tenant_token = get_feishu_tenant_token()
-    notify_identity = resolve_user_identity(tenant_token, notify_open_id)
+    # The three Feishu reads (~1-3s each server-side) and the Zoho template fetch are independent, so run them concurrently.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        identity_future = pool.submit(resolve_user_identity, tenant_token, notify_open_id)
+        record_future = pool.submit(get_feishu_record_by_id, tenant_token, record_id)
+        children_future = pool.submit(find_child_records, tenant_token, record_id)
+        template_future = pool.submit(get_zoho_template_detail, zoho_token)
+        notify_identity = identity_future.result()
+        record = record_future.result()
+        children = children_future.result()
+        template = template_future.result()
     resolved_notify_open_id = notify_identity.get("open_id", "").strip() or notify_open_id
     initiator_email = notify_identity.get("email", "").strip()
     initiator_name = notify_identity.get("name", "").strip()
-    record = get_feishu_record_by_id(tenant_token, record_id)
     record_fields = record.get("fields") or {}
 
-    children = find_child_records(tenant_token, record_id)
     if children:
         record_fields = merge_child_sn_fields(record_fields, children)
         print(json.dumps({"event": "process_sign_start.children_merged", "record_id": record_id, "child_count": len(children)}, ensure_ascii=False), flush=True)
@@ -833,15 +980,16 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
         ),
         flush=True,
     )
-    mapped_fields = build_mapped_fields(record_fields)
+    boxes = get_text_field_boxes(template)
+    mapped_fields = fit_fields_to_boxes(build_mapped_fields(record_fields), boxes)
     try:
-        validate_mapped_fields(mapped_fields)
+        validate_mapped_fields(mapped_fields, boxes)
     except ValidationError as exc:
         print(json.dumps({"event": "process_sign_start.validation_failed", "record_id": record_id, "resolved_wo": resolved_wo, "validation_errors": exc.details}, ensure_ascii=False), flush=True)
         feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} validation failed:\n" + "\n".join(exc.details))
         return {"ok": False, "wo": resolved_wo, "record_id": record_id, "error_type": "validation", "validation_errors": exc.details, "feishu_message_response": feishu_response}
 
-    created = create_zoho_embedded_request(zoho_token, resolved_wo, mapped_fields, resolved_notify_email, initiator_email, initiator_name)
+    created = create_zoho_embedded_request(zoho_token, template, resolved_wo, mapped_fields, resolved_notify_email, initiator_email, initiator_name)
     action_id = next(a["action_id"] for a in created["actions"] if a.get("action_type") == "SIGN")
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)

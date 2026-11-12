@@ -4,7 +4,7 @@
 
 在飞书多维表格中实现一键发起 Zoho Sign 现场服务工单签署。工程师在飞书表格中触发按钮 → 服务器创建 Zoho 嵌入式签署请求 → 将签署链接通过飞书机器人发给现场人员 → 客户在 Zoho 嵌入式页面完成签名 → Zoho Webhook 回调 → 服务器下载已签 PDF 并回写到飞书表格附件字段。
 
-部署平台：Render（免费版），单文件 Python 服务，零外部依赖。
+部署平台：Render（付费 Starter 实例，无冷启动），单文件 Python 服务，零外部依赖。线上服务名 `Onsite_sign`（`srv-d7gelfs71suc7383unl0`），**实际区域为 oregon**。
 
 ## 架构
 
@@ -121,16 +121,17 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 
 可选字段：`austasuch_sn_alte`, `austasuch_sn_neue`, `service_anmerkungen`, `Abfahrt`, `Ankunft`, `Von`, `Bis`, `Entfernung`。
 
-### 校验规则（`validate_mapped_fields`，行 429-450）
+### 校验规则（`validate_mapped_fields`）
 1. 所有必填字段不能为空
 2. 任何字段值不能包含中文字符
 3. 如果 `zustand_austausch = Ja`，则 `austasuch_sn_alte` 和 `austasuch_sn_neue` 也必填
+4. **PDF 溢出预检**：任何文本字段在 PDF 里放不下就拦截，不创建签署，飞书提示精简（SN 字段提示把多余 SN 写到备注）。见下方「PDF 字段溢出」
 
 ### 特殊值转换
 - `日期`：飞书存的是毫秒时间戳 → 转为 `DD.MM.YYYY` 格式（柏林时区）
 - `周数 KW`：`KW07` → `7`，只保留整数
 - 嵌入签署链接：强制追加 `locale=de` 参数
-- `SN(被取回)` / `SN(被使用)`：最多两行，`ceil(N/2)` 均分，`;` 分隔；1 个原样，2 个同行
+- `SN(被取回)` / `SN(被使用)`：统一用 `; ` 连成一行，由 Zoho 按宽度自动折行（不再强制分两行，强制换行会浪费格子空间）
 - `Techniker`：从飞书 `人员` 字段自动提取英文名（email 推断 → en_name → name），1 人直接显示，2 人用 `&` 连接
 
 ### 签署请求命名
@@ -155,6 +156,8 @@ Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
 
 ## 部署（Render）
 
+> ⚠️ 线上服务是在 Render Dashboard 手动创建的，**不受 `render.yaml` 管理**：其中的 `plan: free`、`region: frankfurt`、`healthCheckPath` 均未生效。线上实际为 Starter 付费版、oregon 区域。Render 不支持修改已有服务的区域，迁移需新建服务并更新飞书自动化与 Zoho Webhook 的 URL。
+
 `render.yaml` 定义了：
 - Python 3.12.3
 - 启动命令：`python sign_server.py`
@@ -177,8 +180,8 @@ Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
 3. **`ThreadingHTTPServer` 生产适用性**
    标准库的简易服务器，没有请求队列限制、连接超时等生产级特性。当前低流量场景可接受，流量增大后应考虑 gunicorn 或换用 Render 的 Docker 部署。
 
-4. **OAuth Token 刷新无缓存**
-   每次请求都调用 `get_zoho_access_token()` 去 Zoho 换新的 access token，没有缓存或过期管理。Zoho access token 通常有效期 1 小时，当前实现每次都换，浪费请求且增加延迟。
+4. **OAuth Token 刷新无缓存**（已修复）
+   Zoho access token 与飞书 tenant_access_token 均在内存中缓存，过期前 5 分钟刷新（`_cached_token`）。
 
 5. **付费服务协议模板**
    目前只有一个 `VorortServiceProtokoll2.1` 模板（免费服务）。付费服务工单需要另一个模板和对应的字段映射，尚未实现。
@@ -188,6 +191,22 @@ Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
 
 7. **Zoho API 不支持程序化创建/修改 Dropdown 字段**
    `PUT /api/v1/templates` 和 `POST /api/v1/templates` 均拒绝 `field_type_name: "Dropdown"`。下拉框字段只能通过 Zoho 网页 UI 手动编辑。如需新增下拉框，先在 UI 操作后再用 API 更新 Template 其他部分。
+
+## PDF 字段溢出
+
+Zoho 用 Roboto 渲染模板文本字段，**放不下的内容会被直接截掉，不报错**（历史 306 个请求中 23 个工单受影响，17 份已签）。因此发起前会：
+1. 从 Zoho 模板读取每个文本字段的宽、高、字号（`get_text_field_boxes`），可容纳行数 = `int(高 / (字号 × 1.17))`（1.17 由真实已签 PDF 校准）
+2. 规范化（`fit_fields_to_boxes`）：去空行和多余空格；单行字段（客户名、系统 SN 等）的换行改为 `, `；地址仅在分行写法放不下时才合并成一段
+3. 用代码内置的 Roboto 字宽表（`ROBOTO_WIDTH`，与真实字体误差平均 0.14%）按空格折行计算行数，超出即作为 validation error 拦截
+
+模板几何是实时读取的，换模板（如 BENELUX 英文版）无需改代码。
+
+## 性能说明
+
+飞书多维表格接口服务端很慢（读单条记录约 2–3s，全表 517 条约 8–9s，与返回字段数基本无关）。因此：
+- 子记录查找用 `records/search` 按 `父记录` 过滤，**不要全表扫描**；`search` 返回的文本是分段数组，用 `_join_text_segments` 拼回字符串。
+- 表中的 `子记录` 字段与 `父记录` 反查**不一致**，不可用来找子记录。
+- `process_sign_start` 中解析发起人、读记录、查子记录、拉 Zoho 模板四个请求并行执行。
 
 ## 代码约定
 
