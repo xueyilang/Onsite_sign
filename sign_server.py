@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +28,7 @@ ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "").strip()
 ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
 ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
 ZOHO_EMBED_LOCALE = os.getenv("ZOHO_EMBED_LOCALE", "de").strip() or "de"
+ZOHO_TEMPLATE_ID_BENELUX = os.getenv("ZOHO_TEMPLATE_ID_BENELUX", "").strip()
 
 FEISHU_BASE_URL = os.getenv("FEISHU_BASE_URL", "https://open.feishu.cn").strip()
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
@@ -49,6 +51,31 @@ EMAIL_FIELD = "Email Adresse"
 SN_ALT_FIELD = "SN(被取回)"
 SN_NEU_FIELD = "SN(被使用)"
 LINK_FIELD_PARENT = "父记录"
+DIRECTION_FIELD = "方向"
+
+
+@dataclass(frozen=True)
+class SignRegion:
+    """Per-region signing setup, chosen from the record's 方向 field."""
+
+    name: str
+    template_env: str  # env var holding the Zoho template id
+    template_id: str
+    embed_locale: str
+    fallback_email: str
+    # Feishu stores the checklist answers in German; the English template needs them translated.
+    zustand_values: dict[str, str] = field(default_factory=dict)
+
+
+REGION_DE = SignRegion("DE", "ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID, ZOHO_EMBED_LOCALE, "service@alpha-ess.de")
+REGION_BENELUX = SignRegion(
+    "BENELUX",
+    "ZOHO_TEMPLATE_ID_BENELUX",
+    ZOHO_TEMPLATE_ID_BENELUX,
+    "en",
+    "servicebenelux@alphaess.nl",
+    {"Ja": "Yes", "Nein": "No", "Nicht vorhanden": "Not available"},
+)
 
 REQUIRED_FIELD_MAPPING = {
     "service_date": ["日期"],
@@ -677,8 +704,21 @@ def validate_mapped_fields(mapped_fields: dict[str, str], boxes: dict[str, tuple
         raise ValidationError(errors)
 
 
-def get_zoho_template_detail(token: str) -> dict:
-    template_id = require_env("ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID)
+def get_sign_region(record_fields: dict[str, Any]) -> SignRegion:
+    direction = normalize_value(record_fields.get(DIRECTION_FIELD)).strip().upper()
+    return REGION_BENELUX if direction == "BENELUX" else REGION_DE
+
+
+def translate_zustand_values(mapped_fields: dict[str, str], region: SignRegion) -> dict[str, str]:
+    return {
+        zoho_field: region.zustand_values.get(value, value) if zoho_field.startswith("zustand_") else value
+        for zoho_field, value in mapped_fields.items()
+    }
+
+
+def get_zoho_template_detail(token: str, region: SignRegion = REGION_DE) -> dict:
+    # Fail loudly rather than falling back to another region's template.
+    template_id = require_env(region.template_env, region.template_id)
     response = api_request("GET", f"{ZOHO_BASE_URL}/api/v1/templates/{template_id}", {"Authorization": f"Zoho-oauthtoken {token}"})
     if response.get("status") != "success":
         raise RuntimeError(f"Zoho template fetch failed: {json.dumps(response, ensure_ascii=False)}")
@@ -722,7 +762,7 @@ def build_embedded_actions(template: dict, recipient_name: str, recipient_email:
 
 
 def create_zoho_embedded_request(token: str, template: dict, wo_number: str, mapped_fields: dict[str, str], recipient_email: str, cc_email: str = "", cc_name: str = "") -> dict:
-    template_id = require_env("ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID)
+    template_id = template["template_id"]
     recipient_name = mapped_fields.get("kunden_name", "").strip() or "Kunden Unterschrift"
     resolved_recipient_email = recipient_email.strip() or "service@alpha-ess.de"
     payload = {
@@ -755,11 +795,11 @@ def get_embed_token_payload(token: str, request_id: str, action_id: str) -> dict
     return response
 
 
-def extract_embed_link(payload: dict) -> str:
+def extract_embed_link(payload: dict, locale: str = ZOHO_EMBED_LOCALE) -> str:
     match = re.search(r"https://[^\s\"\\]+", json.dumps(payload, ensure_ascii=False))
     if not match:
         raise RuntimeError(f"Could not find embed link in payload: {json.dumps(payload, ensure_ascii=False)}")
-    return force_embed_link_locale(match.group(0))
+    return force_embed_link_locale(match.group(0), locale)
 
 
 def force_embed_link_locale(url: str, locale: str = ZOHO_EMBED_LOCALE) -> str:
@@ -944,16 +984,20 @@ def merge_child_sn_fields(record_fields: dict[str, Any], child_records: list[dic
 def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_number: str = "") -> dict:
     print(json.dumps({"event": "process_sign_start.begin", "record_id": record_id, "notify_open_id": notify_open_id, "wo_number_hint": wo_number}, ensure_ascii=False), flush=True)
     tenant_token = get_feishu_tenant_token()
-    # The three Feishu reads (~1-3s each server-side) and the Zoho template fetch are independent, so run them concurrently.
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    def load_record_and_template() -> tuple[dict, SignRegion, dict]:
+        # The template depends on the record's region, so it is fetched right after the record.
+        loaded = get_feishu_record_by_id(tenant_token, record_id)
+        loaded_region = get_sign_region(loaded.get("fields") or {})
+        return loaded, loaded_region, get_zoho_template_detail(zoho_token, loaded_region)
+
+    # The Feishu reads take ~1-3s each server-side and are independent, so run them concurrently.
+    with ThreadPoolExecutor(max_workers=3) as pool:
         identity_future = pool.submit(resolve_user_identity, tenant_token, notify_open_id)
-        record_future = pool.submit(get_feishu_record_by_id, tenant_token, record_id)
+        record_future = pool.submit(load_record_and_template)
         children_future = pool.submit(find_child_records, tenant_token, record_id)
-        template_future = pool.submit(get_zoho_template_detail, zoho_token)
         notify_identity = identity_future.result()
-        record = record_future.result()
+        record, region, template = record_future.result()
         children = children_future.result()
-        template = template_future.result()
     resolved_notify_open_id = notify_identity.get("open_id", "").strip() or notify_open_id
     initiator_email = notify_identity.get("email", "").strip()
     initiator_name = notify_identity.get("name", "").strip()
@@ -964,7 +1008,7 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
         print(json.dumps({"event": "process_sign_start.children_merged", "record_id": record_id, "child_count": len(children)}, ensure_ascii=False), flush=True)
     customer_email_raw = normalize_value(record_fields.get(EMAIL_FIELD))
     first_customer_email = extract_first_email(customer_email_raw)
-    resolved_notify_email = first_customer_email or "service@alpha-ess.de"
+    resolved_notify_email = first_customer_email or region.fallback_email
     resolved_wo = normalize_value(record_fields.get(WO_FIELD)) or wo_number or record_id
     print(
         json.dumps(
@@ -972,6 +1016,8 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
                 "event": "process_sign_start.record_loaded",
                 "record_id": record_id,
                 "resolved_wo": resolved_wo,
+                "region": region.name,
+                "template_id": template.get("template_id"),
                 "resolved_notify_open_id": resolved_notify_open_id,
                 "resolved_notify_email": resolved_notify_email,
                 "cc_email": initiator_email if initiator_email.strip().lower() != resolved_notify_email.strip().lower() else "",
@@ -981,7 +1027,7 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
         flush=True,
     )
     boxes = get_text_field_boxes(template)
-    mapped_fields = fit_fields_to_boxes(build_mapped_fields(record_fields), boxes)
+    mapped_fields = fit_fields_to_boxes(translate_zustand_values(build_mapped_fields(record_fields), region), boxes)
     try:
         validate_mapped_fields(mapped_fields, boxes)
     except ValidationError as exc:
@@ -994,7 +1040,7 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)
     print(json.dumps({"event": "process_sign_start.zoho_request_created", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "action_id": action_id}, ensure_ascii=False), flush=True)
-    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id))
+    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id), region.embed_locale)
     feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} embedded sign link:\n{embed_link}")
     print(json.dumps({"event": "process_sign_start.completed", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "message_sent": feishu_response.get("msg")}, ensure_ascii=False), flush=True)
     return {"ok": True, "wo": resolved_wo, "record_id": record_id, "request_id": request_id, "action_id": action_id, "request_status": created.get("request_status"), "embed_link": embed_link, "feishu_message_response": feishu_response}

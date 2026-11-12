@@ -13,7 +13,7 @@
     │
     ├─ 按钮触发 POST /sign/start ──→ sign_server.py (Render)
     │                                       │
-    │                   ① 读取飞书记录       │
+    │                   ① 读取飞书记录+按方向选模板│
     │                   ② 字段映射 + 校验    │
     │                   ③ 创建 Zoho 嵌入式签署│
     │                   ④ 获取签署 URL       │
@@ -68,7 +68,8 @@ curl -X POST http://localhost:8080/sign/start \
 - `ZOHO_TEMPLATE_ID` — 当前生产模板 `VorortServiceProtokoll2.1` (ID: `109352000000062071`)
 - `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET` / `ZOHO_REFRESH_TOKEN` — OAuth 刷新令牌方式获取 access token（优先级高于 `ZOHO_SIGN_TOKEN`）
 - `ZOHO_SIGN_TOKEN` — 静态 token（OAuth 不可用时的 fallback）
-- `ZOHO_EMBED_LOCALE` — 嵌入签署页面语言，默认 `de`
+- `ZOHO_EMBED_LOCALE` — 嵌入签署页面语言，默认 `de`（仅德国区；BENELUX 固定 `en`）
+- `ZOHO_TEMPLATE_ID_BENELUX` — BENELUX 英文模板 `VorortServiceProtokoll-EN-Benelux`（ID: `109352000000292004`）；未配置时 BENELUX 工单直接报错，不会退回德语模板
 - `ZOHO_WEBHOOK_SECRET` — Webhook HMAC 签名密钥
 
 ### 飞书
@@ -133,6 +134,18 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 - 嵌入签署链接：强制追加 `locale=de` 参数
 - `SN(被取回)` / `SN(被使用)`：统一用 `; ` 连成一行，由 Zoho 按宽度自动折行（不再强制分两行，强制换行会浪费格子空间）
 - `Techniker`：从飞书 `人员` 字段自动提取英文名（email 推断 → en_name → name），1 人直接显示，2 人用 `&` 连接
+
+### 区域（BENELUX）
+按飞书记录的 `方向` 字段选择区域配置（`SignRegion`，`get_sign_region`）：
+
+| | 德国区（默认） | BENELUX（`方向 = BENELUX`） |
+|---|---|---|
+| Zoho 模板 | `ZOHO_TEMPLATE_ID`（德语） | `ZOHO_TEMPLATE_ID_BENELUX`（英文，页脚 Alpha ESS Benelux B.V.） |
+| 签署页语言 | `de` | `en` |
+| 兜底收件邮箱 | `service@alpha-ess.de` | `servicebenelux@alphaess.nl` |
+| 状态字段值 | `Ja` / `Nein` / `Nicht vorhanden` 原样 | 翻译为 `Yes` / `No` / `Not available` |
+
+英文模板与德语模板字段一一对应、坐标完全相同；区别是 9 个 `zustand_*` 在英文模板里是**只读文本框**（Zoho API 不能创建下拉框）。模板源文件见 Downloads 下 `ServiceProtocol-EN.docx`（Word 无订阅，只能用“打印 → 存储为 PDF”导出）。
 
 ### 签署请求命名
 Zoho 请求名格式：`VorortProtocol_{工单号}`
