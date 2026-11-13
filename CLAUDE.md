@@ -159,13 +159,19 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 ### 签署请求命名
 Zoho 请求名格式：`VorortProtocol_{工单号}`
 
-### Zoho 签署收件人优先级
-Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
-1. 飞书记录中的 `Email Adresse` 字段（如果格式为合法 email）
-2. 发起人（`notify_open_id` 对应的飞书用户邮箱）
-3. `service@alpha-ess.de`（硬编码兜底）
+### Zoho 签署收件人
+- **签署人（客户，嵌入式）**：飞书 `Email Adresse` 里的第一个合法邮箱；没有就用区域兜底邮箱（德国区 `service@alpha-ess.de`，BENELUX `servicebenelux@alphaess.nl`）。
+- **抄送（VIEW，工程师副本）**：**点击按钮的人**的飞书邮箱，不是 `人员` 字段。飞书自动化把点击人以**名字**（如 `杨赞琦`）传成 `notify_open_id`，服务器用 `list_feishu_users` 在通讯录里按名字/open_id 找到这个人，拿 open_id（发签署链接）和邮箱（抄送）。与客户邮箱相同时不加抄送。
+- `人员` 只用于 PDF 上的 On-site technician 名字。
 
-客户签完后 Zoho 自动发送已签文档副本（`send_completed_document: True`）。
+客户签完后 Zoho 自动给签署人和抄送人发已签文档副本（`send_completed_document: True`）。
+
+### 飞书应用权限（每个点按钮的人都需要）
+1. 应用**可用范围**：否则机器人发不了签署链接给他。
+2. **通讯录权限范围**：否则 `list_feishu_users` 查不到他，拿不到 open_id 和邮箱。
+3. 多维表格编辑权限：否则按钮/自动化不触发（这种失败不会到服务器，日志里看不到）。
+
+点击人不在通讯录范围内时的现状：Zoho 请求照样创建（没有抄送），随后发飞书消息失败，链接丢失，请求挂在 Zoho 里。2026-11-13 核对时通讯录范围只有 9 个德国区用户（离职的 jianfei.yu、mark.ma 已移出）；已申请扩大到整个部门，但当时读回仍是 9 人，需发布新版本/管理员审批后才生效，BENELUX 同事首次使用前要再确认。可用 `GET /open-apis/contact/v3/scopes` 和 `list_feishu_users` 核对。历史核对：5 月加抄送以来 312 单都有抄送人，没有发现解析失败的单子。
 
 ### kunden_contact 字段优先级
 1. 优先取 `Email Adresse` 字段的值
@@ -210,11 +216,31 @@ Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
 5. **付费服务协议模板**
    目前只有一个 `VorortServiceProtokoll2.1` 模板（免费服务）。付费服务工单需要另一个模板和对应的字段映射，尚未实现。
 
-6. **嵌入签署链接可能一次性失效**
-   Zoho Sign embed token 生成的 `zsguest?sign_id=...` 链接基于 session，打开后可能过期。当前未做中转处理，如频繁遇到需加 `GET /sign/embed` 重定向端点（每次点击重新获取 embed token）。
+6. **嵌入签署链接一次性、2 分钟有效**
+   Zoho Sign embed token 生成的 `zsguest?sign_id=...` 链接只能打开一次，且按 Zoho 文档生成后约 2 分钟不打开就失效。重新点按钮会再建一单新请求，旧的挂在 Zoho 直到过期（5 月以来 312 单中 95 单 expired）。当前未做中转处理，如需改进可加 `GET /sign/embed` 重定向端点（每次点击重新获取 embed token）。现场操作说明已写进 BENELUX 说明文档。
 
 7. **Zoho API 不支持程序化创建/修改 Dropdown 字段**
    `PUT /api/v1/templates` 和 `POST /api/v1/templates` 均拒绝 `field_type_name: "Dropdown"`。下拉框字段只能通过 Zoho 网页 UI 手动编辑。如需新增下拉框，先在 UI 操作后再用 API 更新 Template 其他部分。
+
+8. **点击人解析不到时链接丢失**
+   见上方「飞书应用权限」。可改为：解析不到点击人时先在飞书/日志报错，不创建 Zoho 请求（2026-11-13 用户决定暂不改）。
+
+9. **BENELUX 抄送工程师收到德语邮件**（原因未明）
+   客户收到英文；工程师（VIEW）收到德语。前一天英文邮件模板未自定义时工程师收到的是英文默认样式。API 读回看不到收件人语言，只能靠真实测试判断。
+
+10. **飞书里有自动化把 `Email Adresse` 改成 `（空）`**
+    签完后出现过。代码已容忍（见 kunden_contact），但客户邮箱被覆盖后不会恢复，需要在飞书里找到这个自动化。
+
+11. **英文邮件模板的隐藏页脚未在 Outlook 验证**
+    Gmail 正常；Outlook 桌面版可能露出原页脚的空白和 “here” 链接。
+
+12. **Techniker 框只占半行**
+    Zoho 模板里 Techniker 文本框约 154pt 宽、一行，4 个最长名字组合偶尔会被溢出预检拦截。要彻底解决需在 Zoho 网页里把框拉宽到整行（德语模板有下拉框，不能用 API 改）。
+
+## 文档与外部配置位置
+- BENELUX 同事说明文档（英文，私有 Artifact，需在 Share 里共享）：https://claude.ai/artifact/3ueKAfXND72s97uY4DZ5Ur
+- Zoho 邮件模板：Zoho Sign → Settings → Branding → Email templates（English 26 个已改，见「区域（BENELUX）」）。
+- 飞书应用权限：飞书开放平台 → 应用 → 可用范围 / 通讯录权限范围。
 
 ## PDF 字段溢出
 
