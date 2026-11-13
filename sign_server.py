@@ -61,19 +61,23 @@ class SignRegion:
     name: str
     template_env: str  # env var holding the Zoho template id
     template_id: str
-    # Language of the embedded signing page and of every Zoho email to the recipients (incl. the completed PDF).
+    # Language of every Zoho email to the recipients (incl. the completed PDF).
     language: str
+    # Language of the embedded signing page (locale= in the link). Zoho ignores locale=en and falls back
+    # to the device's browser language (e.g. Chinese), so only a non-English code reliably forces the UI.
+    signing_page_locale: str
     fallback_email: str
     # Feishu stores the checklist answers in German; the English template needs them translated.
     zustand_values: dict[str, str] = field(default_factory=dict)
 
 
-REGION_DE = SignRegion("DE", "ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID, ZOHO_EMBED_LOCALE, "service@alpha-ess.de")
+REGION_DE = SignRegion("DE", "ZOHO_TEMPLATE_ID", ZOHO_TEMPLATE_ID, ZOHO_EMBED_LOCALE, ZOHO_EMBED_LOCALE, "service@alpha-ess.de")
 REGION_BENELUX = SignRegion(
     "BENELUX",
     "ZOHO_TEMPLATE_ID_BENELUX",
     ZOHO_TEMPLATE_ID_BENELUX,
     "en",
+    "nl",
     "servicebenelux@alphaess.nl",
     {"Ja": "Yes", "Nein": "No", "Nicht vorhanden": "Not available"},
 )
@@ -1043,7 +1047,7 @@ def process_sign_start(record_id: str, notify_open_id: str, zoho_token: str, wo_
     request_id = created["request_id"]
     store_request_mapping(request_id, record_id, resolved_wo, action_id)
     print(json.dumps({"event": "process_sign_start.zoho_request_created", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "action_id": action_id}, ensure_ascii=False), flush=True)
-    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id), region.language)
+    embed_link = extract_embed_link(get_embed_token_payload(zoho_token, request_id, action_id), region.signing_page_locale)
     feishu_response = send_feishu_text(tenant_token, resolved_notify_open_id, f"{resolved_wo} embedded sign link:\n{embed_link}")
     print(json.dumps({"event": "process_sign_start.completed", "record_id": record_id, "resolved_wo": resolved_wo, "request_id": request_id, "message_sent": feishu_response.get("msg")}, ensure_ascii=False), flush=True)
     return {"ok": True, "wo": resolved_wo, "record_id": record_id, "request_id": request_id, "action_id": action_id, "request_status": created.get("request_status"), "embed_link": embed_link, "feishu_message_response": feishu_response}

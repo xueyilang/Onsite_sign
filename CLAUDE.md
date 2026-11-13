@@ -68,7 +68,7 @@ curl -X POST http://localhost:8080/sign/start \
 - `ZOHO_TEMPLATE_ID` — 当前生产模板 `VorortServiceProtokoll2.1` (ID: `109352000000062071`)
 - `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET` / `ZOHO_REFRESH_TOKEN` — OAuth 刷新令牌方式获取 access token（优先级高于 `ZOHO_SIGN_TOKEN`）
 - `ZOHO_SIGN_TOKEN` — 静态 token（OAuth 不可用时的 fallback）
-- `ZOHO_EMBED_LOCALE` — 嵌入签署页面语言，默认 `de`（仅德国区；BENELUX 固定 `en`）
+- `ZOHO_EMBED_LOCALE` — 德国区的签署页语言和邮件语言，默认 `de`（BENELUX 固定：签署页 `nl`、邮件 `en`）
 - `ZOHO_TEMPLATE_ID_BENELUX` — BENELUX 英文模板 `VorortServiceProtokoll-EN-Benelux`（ID: `109352000000292004`）；未配置时 BENELUX 工单直接报错，不会退回德语模板
 - `ZOHO_WEBHOOK_SECRET` — Webhook HMAC 签名密钥
 
@@ -131,7 +131,7 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 ### 特殊值转换
 - `日期`：飞书存的是毫秒时间戳 → 转为 `DD.MM.YYYY` 格式（柏林时区）
 - `周数 KW`：`KW07` → `7`，只保留整数
-- 嵌入签署链接：强制追加 `locale=de` 参数
+- 嵌入签署链接：强制设置 `locale` 参数（德国区 `de`，BENELUX `nl`）
 - `SN(被取回)` / `SN(被使用)`：统一用 `; ` 连成一行，由 Zoho 按宽度自动折行（不再强制分两行，强制换行会浪费格子空间）
 - `Techniker`：从飞书 `人员` 字段自动提取英文名（email 推断 → en_name → name），1 人直接显示，2 人用 `&` 连接
 
@@ -141,13 +141,20 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 | | 德国区（默认） | BENELUX（`方向 = BENELUX`） |
 |---|---|---|
 | Zoho 模板 | `ZOHO_TEMPLATE_ID`（德语） | `ZOHO_TEMPLATE_ID_BENELUX`（英文，页脚 Alpha ESS Benelux B.V.） |
-| 签署页 + Zoho 邮件语言（含签完后发给客户和工程师的 PDF 邮件） | `de` | `en` |
+| 签署页语言（`signing_page_locale`） | `de` | `nl`（不能用 `en`，见下文） |
+| Zoho 邮件语言（`language`，含签完后的 PDF 邮件） | `de` | `en`（客户生效；抄送工程师仍收到德语，原因未明，见下文） |
 | 兜底收件邮箱 | `service@alpha-ess.de` | `servicebenelux@alphaess.nl` |
 | 状态字段值 | `Ja` / `Nein` / `Nicht vorhanden` 原样 | 翻译为 `Yes` / `No` / `Not available` |
 
 英文模板与德语模板字段一一对应、坐标完全相同；区别是 9 个 `zustand_*` 在英文模板里是**普通文本框**（Zoho API 不能创建下拉框）。**不要把预填文本框设为只读**：Zoho 不会把只读文本框的预填值渲染进 PDF（签署前和签完都是空的）。
 
-邮件语言由 createdocument 时每个收件人的 `language` 决定（`build_embedded_actions`），不传时用账户默认 `de`。模板源文件见 Downloads 下 `ServiceProtocol-EN.docx`（Word 无订阅，只能用“打印 → 存储为 PDF”导出）。
+**邮件语言**：代码在 createdocument 时给每个收件人传 `language`（`build_embedded_actions`）。Zoho 后台 Branding → Email templates 里**不要勾选 “Set as common language”**，勾上后所有收件人都被强制成该语言、`language` 参数失效（2026-11-12 就是因为勾了德语才一直收到德语）。注意 API（包括网页后台的内部接口）读回请求时 `language` 常为空或不准，**不能用回读判断是否生效，只能看实际收到的邮件**。实测（2026-11-13）：客户（嵌入式签署人）收到英文；抄送工程师（VIEW）收到德语，而前一天英文邮件模板未自定义时工程师收到的是英文，原因未确认。
+
+**英文邮件模板**（Zoho 后台 Branding → Email templates → English，共 26 个，只有 BENELUX 会用到）：已改成灰色顶栏 `#9FA0A0`、黄色按钮 `#FABE0F`（与德语模板和 logo 一致）；正文和标题里的 `$SENDER_EMAIL$` / `$ORG_NAME$` 已写死为 `servicebenelux@alphaess.nl` / `Alpha ESS Benelux B.V.`。`$FOOTER$` 是 Zoho 必填变量，删掉就无法保存，所以原页脚被包在隐藏的 div 里（Zoho 保存时会删掉 `display:none` 和 `mso-hide:all`，保留 `hidden` 属性和 `visibility:hidden` 等），下面另写一份同内容、邮箱换成 Benelux 的页脚。Gmail 已验证只显示我们的页脚，Outlook 未测。发件人地址和回复地址仍是 `service@alpha-ess.de`（发起请求的 Zoho 账户），要彻底分开只能给 BENELUX 单独开 Zoho 用户和 refresh token。
+
+**签署页语言**：由 embed 链接的 `locale` 控制，Zoho 生成的链接本身带 `locale=en`。但 Zoho 签署页对 `locale=en` 不生效：它把 `en` 当成默认值，不带 locale 去取界面文字，结果按设备浏览器语言显示（中文手机就是中文）。`de`、`nl` 等非英语值能强制生效；Zoho 支持的英语代码只有 `en`（`en_GB` 会让页面卡在加载中）。所以 BENELUX 签署页用 `nl`，PDF 和邮件仍是英文。
+
+模板源文件见 Downloads 下 `ServiceProtocol-EN.docx`（Word 无订阅，只能用“打印 → 存储为 PDF”导出）。
 
 ### 签署请求命名
 Zoho 请求名格式：`VorortProtocol_{工单号}`
