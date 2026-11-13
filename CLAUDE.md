@@ -79,6 +79,13 @@ curl -X POST http://localhost:8080/sign/start \
 - `FEISHU_TABLE_ID` — 表格 ID
 - `DEFAULT_NOTIFY_OPEN_ID` — 默认通知目标（未指定 `notify_open_id` 时的 fallback）
 
+### Zoho 额度周报
+- `ZOHO_CREDIT_REFRESH_TOKEN` — 只读令牌（scope `ZohoSign.account.READ`，同一个 Self Client 于 2026-11-13 生成），只用于查额度，和签署用的 `ZOHO_REFRESH_TOKEN` 分开
+- `CREDIT_REPORT_OPEN_ID` — 接收周报的飞书 open_id（Marco：`ou_59c3ace2665789eeea82ffda54b21bc6`）
+- `CREDIT_ALERT_THRESHOLD` — 低于该值时消息里加提醒，默认 200
+
+两者都设置时，`main()` 启动后台线程 `run_weekly_credit_report`：每周一 09:00 柏林时间（`next_credit_report_time`，自动处理冬/夏令时）调 `GET /api/v1/currentuser` 读 `zs_credits_left`，无论多少都发一条飞书消息；查询失败也会发失败消息。服务重启后重新计算下一次时间，启动日志有 `credit_report.scheduled` 或 `credit_report.disabled`。2026-11-13 剩余 1895 credits。
+
 ### 服务
 - `TRIGGER_AUTH_TOKEN` — 保护 `/sign/start` 端点
 - `REQUEST_MAP_FILE` — 映射持久化文件路径，默认 `request_map.json`

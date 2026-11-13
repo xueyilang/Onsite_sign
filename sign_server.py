@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +29,10 @@ ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
 ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
 ZOHO_EMBED_LOCALE = os.getenv("ZOHO_EMBED_LOCALE", "de").strip() or "de"
 ZOHO_TEMPLATE_ID_BENELUX = os.getenv("ZOHO_TEMPLATE_ID_BENELUX", "").strip()
+# Read-only token (scope ZohoSign.account.READ) used only for the weekly credit report.
+ZOHO_CREDIT_REFRESH_TOKEN = os.getenv("ZOHO_CREDIT_REFRESH_TOKEN", "").strip()
+CREDIT_REPORT_OPEN_ID = os.getenv("CREDIT_REPORT_OPEN_ID", "").strip()
+CREDIT_ALERT_THRESHOLD = int(os.getenv("CREDIT_ALERT_THRESHOLD", "200").strip() or "200")
 
 FEISHU_BASE_URL = os.getenv("FEISHU_BASE_URL", "https://open.feishu.cn").strip()
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
@@ -323,14 +327,14 @@ def get_zoho_access_token() -> str:
     return require_env("ZOHO_SIGN_TOKEN", ZOHO_SIGN_TOKEN)
 
 
-def _fetch_zoho_access_token() -> tuple[str, int]:
+def _fetch_zoho_access_token(refresh_token: str = "") -> tuple[str, int]:
     response = api_request(
         "POST",
         f"{ZOHO_ACCOUNTS_BASE_URL}/oauth/v2/token",
         {"Content-Type": "application/x-www-form-urlencoded"},
         urllib.parse.urlencode(
             {
-                "refresh_token": ZOHO_REFRESH_TOKEN,
+                "refresh_token": refresh_token or ZOHO_REFRESH_TOKEN,
                 "client_id": ZOHO_CLIENT_ID,
                 "client_secret": ZOHO_CLIENT_SECRET,
                 "grant_type": "refresh_token",
@@ -1189,10 +1193,58 @@ class SignHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": "zoho_webhook_failed", "detail": str(exc)})
 
 
+def next_credit_report_time(now_utc: datetime) -> datetime:
+    """Next Monday 09:00 Berlin time after now_utc, returned in UTC."""
+    berlin = BERLIN_TZ or timezone(timedelta(hours=1))
+    local = now_utc.astimezone(berlin)
+    target = local.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=-local.weekday() % 7)
+    if target <= local:
+        target += timedelta(days=7)
+    # Wall-clock arithmetic: ZoneInfo picks CET or CEST for the target date itself.
+    return target.astimezone(UTC)
+
+
+def fetch_zoho_credits_left() -> int:
+    access_token, _ = _fetch_zoho_access_token(ZOHO_CREDIT_REFRESH_TOKEN)
+    response = api_request("GET", f"{ZOHO_BASE_URL}/api/v1/currentuser", {"Authorization": f"Zoho-oauthtoken {access_token}"})
+    return int(response["users"]["zs_credits_left"])
+
+
+def send_credit_report() -> str:
+    try:
+        credits_left = fetch_zoho_credits_left()
+        text = f"Zoho Sign 每周额度：剩余 {credits_left} credits"
+        if credits_left < CREDIT_ALERT_THRESHOLD:
+            text += f"\n⚠️ 已低于 {CREDIT_ALERT_THRESHOLD}，请尽快充值。"
+        print(json.dumps({"event": "credit_report.checked", "credits_left": credits_left}, ensure_ascii=False), flush=True)
+    except Exception as exc:
+        text = f"Zoho Sign 每周额度检查失败：{exc}"
+        print(json.dumps({"event": "credit_report.check_failed", "detail": str(exc)}, ensure_ascii=False), flush=True)
+    send_feishu_text(get_feishu_tenant_token(), CREDIT_REPORT_OPEN_ID, text)
+    print(json.dumps({"event": "credit_report.sent"}, ensure_ascii=False), flush=True)
+    return text
+
+
+def run_weekly_credit_report() -> None:
+    while True:
+        due = next_credit_report_time(datetime.now(UTC))
+        print(json.dumps({"event": "credit_report.scheduled", "due_utc": due.isoformat()}, ensure_ascii=False), flush=True)
+        time.sleep(max(0.0, (due - datetime.now(UTC)).total_seconds()))
+        try:
+            send_credit_report()
+        except Exception as exc:
+            print(json.dumps({"event": "credit_report.send_failed", "detail": str(exc)}, ensure_ascii=False), flush=True)
+            traceback.print_exc()
+
+
 def main() -> int:
     port = int(os.getenv("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), SignHandler)
     print(json.dumps({"event": "server.start", "port": port}, ensure_ascii=False), flush=True)
+    if ZOHO_CREDIT_REFRESH_TOKEN and CREDIT_REPORT_OPEN_ID:
+        threading.Thread(target=run_weekly_credit_report, name="credit-report", daemon=True).start()
+    else:
+        print(json.dumps({"event": "credit_report.disabled", "reason": "ZOHO_CREDIT_REFRESH_TOKEN or CREDIT_REPORT_OPEN_ID not set"}, ensure_ascii=False), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
