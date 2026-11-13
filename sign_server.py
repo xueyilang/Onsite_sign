@@ -52,6 +52,7 @@ SN_ALT_FIELD = "SN(被取回)"
 SN_NEU_FIELD = "SN(被使用)"
 LINK_FIELD_PARENT = "父记录"
 DIRECTION_FIELD = "方向"
+EMPTY_PLACEHOLDERS = {"（空）", "(空)"}
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ FIELD_LABELS = {
     "service_KW": "周数 KW",
     "kunden_name": "联系人(工单)",
     "kunden_addr": "地址信息",
-    "kunden_contact": "联系方式",
+    "kunden_contact": "Email Adresse / 联系方式",
     "system_modell": "vorort_system_modell",
     "system_sn": "SN编号",
     "system_bat_modell": "vorort_system_bat_modell",
@@ -369,7 +370,9 @@ def normalize_value(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, (str, int, float, bool)):
-        return str(value).strip()
+        text = str(value).strip()
+        # Feishu sometimes writes the placeholder "（空）" ("empty") into a cleared field; treat it as empty.
+        return "" if text in EMPTY_PLACEHOLDERS else text
     if isinstance(value, list):
         parts = [normalize_value(item) for item in value]
         return ", ".join(part for part in parts if part)

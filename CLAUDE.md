@@ -171,6 +171,8 @@ Zoho 嵌入式签署的收件人邮箱按以下优先级确定：
 1. 优先取 `Email Adresse` 字段的值
 2. 为空时取 `联系方式` 字段 → 多行号码时只取第一行
 
+飞书会把被清空的字段写成占位文字 `（空）`（签完后 `Email Adresse` 被改成 `（空）` 就是这样），`normalize_value` 把 `（空）` / `(空)` 当空值处理，所以不会再被优先选中、触发“含中文”的误报。两个字段都为空时，报错标签是 `Email Adresse / 联系方式`。
+
 ### Webhook 回写
 从 Zoho Webhook payload 中提取 `request_id` → 查 `request_map.json` 获取 `record_id` → 下载 PDF → 上传到飞书 → 更新飞书记录的附件字段。
 
