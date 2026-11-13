@@ -53,6 +53,7 @@ SN_NEU_FIELD = "SN(被使用)"
 LINK_FIELD_PARENT = "父记录"
 DIRECTION_FIELD = "方向"
 EMPTY_PLACEHOLDERS = {"（空）", "(空)"}
+MAX_TECHNIKER_NAMES = 4  # 人员 names printed as "On-site technician"; 4 fit on the template's one-line box
 
 
 @dataclass(frozen=True)
@@ -212,9 +213,10 @@ def infer_english_given_name_from_email(email: str) -> str:
 
 
 def extract_techniker_name(record_fields: dict[str, Any]) -> str:
-    """Extract English given names from the Feishu '人员' (Personnel) field.
+    """Extract English given names from the Feishu '人员' (Personnel) field, up to 4 people.
     1 person → 'Marco'
     2 people → 'Marco & Tri'
+    4 people → 'Maximilian, Chao, Steven & Zack'
     """
     personnel = record_fields.get("人员")
     if not isinstance(personnel, list) or not personnel:
@@ -228,10 +230,10 @@ def extract_techniker_name(record_fields: dict[str, Any]) -> str:
             return infer_english_given_name_from_email(email) or en_name or name
         return str(item).strip()
 
-    names = [n for n in (resolve_name(p) for p in personnel[:2]) if n]
-    if len(names) == 1:
-        return names[0]
-    return f"{names[0]} & {names[1]}"
+    names = [n for n in (resolve_name(p) for p in personnel[:MAX_TECHNIKER_NAMES]) if n]
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} & {names[-1]}"
 
 
 def require_env(name: str, value: str) -> str:

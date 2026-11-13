@@ -133,7 +133,7 @@ Zoho Sign 事件回调。鉴权方式：验证 `X-ZS-WEBHOOK-SIGNATURE` Header �
 - `周数 KW`：`KW07` → `7`，只保留整数
 - 嵌入签署链接：强制设置 `locale` 参数（德国区 `de`，BENELUX `nl`）
 - `SN(被取回)` / `SN(被使用)`：统一用 `; ` 连成一行，由 Zoho 按宽度自动折行（不再强制分两行，强制换行会浪费格子空间）
-- `Techniker`：从飞书 `人员` 字段自动提取英文名（email 推断 → en_name → name），1 人直接显示，2 人用 `&` 连接
+- `Techniker`：从飞书 `人员` 字段自动提取英文名（email 推断 → en_name → name），最多取前 4 人（`MAX_TECHNIKER_NAMES`）：`Marco`、`Marco & Tri`、`A, B, C & D`。德国区和 BENELUX 相同。模板里的 Techniker 框宽约 154pt、一行 8pt；按表中 31 位工程师实测，3 人任意组合都放得下，4 人组合只有极少数（最长名字凑在一起，约 0.04%）会超出并被溢出预检拦截
 
 ### 区域（BENELUX）
 按飞书记录的 `方向` 字段选择区域配置（`SignRegion`，`get_sign_region`）：
